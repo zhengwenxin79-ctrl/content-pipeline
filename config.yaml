@@ -1,0 +1,93 @@
+# 内容pipeline配置
+
+# 数据库路径
+db_path: "corpus/corpus.db"
+
+# RSS订阅源
+rss_sources:
+  # --- 行业媒体 ---
+  - name: "MIT Technology Review - AI"
+    url: "https://www.technologyreview.com/feed/"
+    tags: ["AI", "科技"]
+  - name: "STAT News"
+    url: "https://www.statnews.com/feed/"
+    tags: ["医疗AI", "新闻"]
+  - name: "Healthcare IT News"
+    url: "https://www.healthcareitnews.com/rss.xml"
+    tags: ["医疗IT"]
+
+  # --- 顶级期刊：综合与临床转化 ---
+  - name: "Nature Medicine"
+    url: "https://www.nature.com/nm.rss"
+    tags: ["顶刊", "医学"]
+  - name: "Nature Biomedical Engineering"
+    url: "https://www.nature.com/natbiomedeng.rss"
+    tags: ["顶刊", "生物医学工程"]
+  - name: "The Lancet Digital Health"
+    url: "https://www.thelancet.com/rssfeed/landig_current.xml"
+    tags: ["顶刊", "数字健康"]
+  - name: "NEJM AI"
+    url: "https://ai.nejm.org/rss/current.xml"
+    tags: ["顶刊", "医疗AI"]
+  - name: "npj Digital Medicine"
+    url: "https://www.nature.com/npjdigitalmed.rss"
+    tags: ["顶刊", "数字医学"]
+  - name: "JAMA Network Open"
+    url: "https://jamanetwork.com/rss/site_3/67.xml"
+    tags: ["顶刊", "临床"]
+
+  # --- 顶级期刊：算法与医学影像 ---
+  - name: "Medical Image Analysis"
+    url: "https://rss.sciencedirect.com/publication/science/13618415"
+    tags: ["顶刊", "医学影像", "算法"]
+  - name: "IEEE Transactions on Medical Imaging"
+    url: "https://ieeexplore.ieee.org/rss/TOC34.XML"
+    tags: ["顶刊", "医学影像", "IEEE"]
+  - name: "IEEE Journal of Biomedical and Health Informatics"
+    url: "https://ieeexplore.ieee.org/rss/TOC6221020.XML"
+    tags: ["顶刊", "生物医学信息学", "IEEE"]
+
+  # --- arXiv：医疗AI + 顶会方向覆盖 ---
+  - name: "arXiv q-bio.QM (生物医学定量方法)"
+    url: "https://arxiv.org/rss/q-bio.QM"
+    tags: ["arXiv", "预印本", "生物医学"]
+  - name: "arXiv cs.AI (人工智能)"
+    url: "https://arxiv.org/rss/cs.AI"
+    tags: ["arXiv", "预印本", "AI"]
+  - name: "arXiv eess.IV (医学影像/MICCAI方向)"
+    url: "https://arxiv.org/rss/eess.IV"
+    tags: ["arXiv", "预印本", "医学影像", "MICCAI"]
+  - name: "arXiv cs.CV (计算机视觉/CVPR方向)"
+    url: "https://arxiv.org/rss/cs.CV"
+    tags: ["arXiv", "预印本", "计算机视觉", "CVPR"]
+  - name: "arXiv cs.LG (机器学习/NeurIPS方向)"
+    url: "https://arxiv.org/rss/cs.LG"
+    tags: ["arXiv", "预印本", "机器学习", "NeurIPS"]
+  - name: "arXiv cs.CL (NLP/大模型)"
+    url: "https://arxiv.org/rss/cs.CL"
+    tags: ["arXiv", "预印本", "NLP", "大模型"]
+
+# wewe-rss 接入配置
+# 部署好 wewe-rss 后，它会把公众号文章生成 RSS，填入地址即可自动抓取
+# wewe-rss项目: https://github.com/cooderl/wewe-rss
+wewe_rss:
+  enabled: true
+  base_url: "http://localhost:4000"   # wewe-rss 部署地址
+  # 每个公众号对应一个RSS路径，格式: /feeds/<fakeid>.atom
+  # fakeid 在 wewe-rss 界面订阅后可以看到
+  accounts:
+    - name: "MedicalAI"
+      feed_path: "/feeds/MP_WXS_3709039840.atom"
+      tags: ["医疗AI", "微信公众号"]
+
+# DeepSeek API配置
+deepseek:
+  model: "deepseek-chat"
+  max_tokens: 4096
+  # API key 通过环境变量 DEEPSEEK_API_KEY 设置
+
+# 写作风格配置
+writing_style:
+  tone: ""         # 例如：专业严肃 / 轻松科普 / 深度分析
+  persona: ""      # 例如：医疗AI从业者 / 科研工作者
+  max_length: 3000
