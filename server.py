@@ -118,38 +118,89 @@ def analyze_wechat_article(article_id: int) -> dict:
         return {"error": str(e)}
 
 
-def _build_draft_prompt(articles_text: str) -> str:
-    return f"""你是医疗AI公众号主编，对标「Medical AI」「丁香园」「量子位医疗」等高阅读量账号的写作水准。
+
+
+def _extract_key_points(client, articles_text: str) -> str:
+    """素材萃取：在生成初稿前，先把原始素材压缩成结构化要点。
+    这一步解决"模型逐篇复述素材"的问题，让写作聚焦于跨材料的核心洞察。"""
+    extract_prompt = f"""你是一个医疗AI领域的信息分析师。请从以下多篇素材中提取结构化要点，用于后续公众号文章写作。
+
+要求：
+1. 跨材料找出一个最值得写的核心发现/趋势/事件（一句话概括）
+2. 提取 3-5 个关键事实（必须有具体数字、机构名、产品名等可核实信息）
+3. 识别一个"读者会关心的决策点"（如果你是医疗AI产品经理，这意味着什么？）
+4. 标注哪些信息来自哪篇素材（用【文章N】标注）
+
+素材：
+{articles_text}
+
+输出格式：
+【核心发现】一句话
+
+【关键事实】
+1. xxx（来源：【文章N】）
+2. xxx（来源：【文章N】）
+...
+
+【决策参考】
+对目标读者（医疗AI产品经理/医院信息化负责人）的具体意义
+
+【写作建议】
+推荐的文章切入角度（一句话）"""
+
+    try:
+        r = client.chat.completions.create(
+            model="deepseek-chat", timeout=60, max_tokens=1200,
+            temperature=0.3,
+            messages=[{"role": "user", "content": extract_prompt}]
+        )
+        return r.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"⚠ 素材萃取失败，使用原始素材: {e}")
+        return ""
+
+
+def _build_draft_prompt(articles_text: str, extracted_points: str = "") -> tuple:
+    """返回 (system_message, user_message) 元组，拆分角色定位和写作任务。"""
+    system_msg = """你是医疗AI公众号主编，对标「Medical AI」「丁香园」「量子位医疗」等高阅读量账号的写作水准。
 目标读者：医疗AI产品经理/产品总监、医疗科技公司决策层（创始人/BD）、医院信息化负责人——
 他们看文章是为了做决定，不是为了学知识。让他们觉得"这个信息今天就能用上"，才会转发。
 写作视角：比读者早一步看清落地坑的产品人，帮读者把事情想清楚，不是旁观者综述。
 
-## 爆款文章的底层逻辑（必须命中其中至少1条）
-- **具体数字+场景**：X医院/X公司用Y方案，覆盖Z个科室/场景，解决了W问题——让读者能直接拿去汇报
-- **决策参考**：如果你是医院信息化负责人/医疗AI产品总监，看完这篇你会做什么决定
-- **落地反差**：技术上能做到，但医院为什么不用/不敢用/用了又下线——命中"能用但不好用"的痛点
-- **竞争格局变化**：某个产品/公司的动作，意味着这条赛道的竞争逻辑变了
+## 你的禁用词清单（遇到就替换为更具体的表述）
+"下半场""上半场""深水区""新范式""新赛道""赋能""重塑""颠覆""生态闭环""闭环""破局""内卷""弯道超车""降维打击""护城河""数智化""智慧医疗""数字化转型""AI赋能""最后一公里""全链条""底层逻辑""顶层设计"
 
-## 写作要求
-1. **字数1000-1500字**，宁短勿长，每个字都要有信息量。
-2. **开头前3句命中以上底层逻辑之一**——用具体数字、临床场景或一个尖锐问题开场，不准用"近年来""随着AI发展"这类废话开头。
-3. **全文只有一个核心判断**，围绕它展开，不要面面俱到。
-4. **小标题用结论句**，让读者扫一眼就知道文章价值（不用"背景介绍""未来展望"这类空洞标题）。
-5. 每个论点必须用材料中的事实支撑，没有的不编。
-6. 【禁止编造引用】只用材料中明确给出的信息；引用时不写"发表于《某期刊》某卷某期"格式，除非材料中有，用"据该研究""研究发现"替代。
-7. 【数据缺口处理】原文中没有的具体数字，不得用占位符（X%、待补充、具体数据见原文等）代替；改用相对表述（"显著优于基线""在少样本条件下取得"）或直接跳过该数字，不影响核心判断的表达。
-7. **语气**：克制有力，有自己的判断，不浮夸，不写"首先其次最后"，不写"值得注意的是"。
-8. **结尾**：给出一个明确判断或行动建议，不喊口号。
-9. 【排版】每段2-4句，一个意思说完就换段。
-10. 【禁用词】必须替换："下半场""上半场""深水区""新范式""新赛道""赋能""重塑""颠覆""生态闭环""闭环""破局""内卷""弯道超车""降维打击""护城河""数智化""智慧医疗""数字化转型""AI赋能""最后一公里""全链条""底层逻辑""顶层设计"
+## 你的写作铁律
+- 不用"近年来""随着AI发展""值得注意的是""首先其次最后"开头或过渡
+- 不编造数据，原文没有的数字用相对表述替代，不用占位符（X%、待补充）
+- 引用不写"发表于《某期刊》某卷某期"格式，用"据该研究""研究发现"替代"""
 
-## 标题要求（必须给出3个备选，风格不同）
-- **判断型**：直接给出观点，有争议感（如"AI读片准确率超过专家，但医院为什么还不用"）
+    source_section = f"""
+## 素材萃取要点（优先基于此写作）
+{extracted_points}
+
+## 原始参考材料（需要具体数据时查阅）
+{articles_text}""" if extracted_points else f"""
+## 参考材料
+{articles_text}"""
+
+    user_msg = f"""请基于以下材料写一篇微信公众号文章。
+
+{source_section}
+
+## 本次写作任务
+1. **字数1000-1500字**，宁短勿长。
+2. **开头前3句**必须命中以下之一：具体数字+场景、一个尖锐问题、一个反直觉事实。
+3. **全文只有一个核心判断**，围绕它展开。
+4. **小标题用结论句**，2-3个小标题，体现递进关系。
+5. 每个论点用材料中可核实的事实支撑。
+6. **结尾**：给出一个明确判断或行动建议。
+7. 每段2-4句，一个意思说完就换段。
+
+## 标题要求（必须给出3个备选）
+- **判断型**：直接给出有争议的观点（如"AI读片准确率超过专家，但医院为什么还不用"）
 - **数字型**：用核心数据勾起好奇（如"一个模型让误诊率下降37%，它是怎么做到的"）
 - **场景型**：代入具体人物情境（如"一个急诊科医生用了AI辅助诊断，然后他被投诉了"）
-
-参考材料：
-{articles_text}
 
 直接输出：
 【备选标题】
@@ -161,23 +212,30 @@ def _build_draft_prompt(articles_text: str) -> str:
 （直接写正文）
 
 参考文献：
-（仅列出正文中实际引用到的材料，每条格式：文章标题 / 来源名称 / 发布时间 / 链接（若材料中有链接则必须填入，无则写"无"））"""
+（仅列出正文中实际引用到的材料，格式：文章标题 / 来源名称 / 发布时间 / 链接）"""
 
+    return system_msg, user_msg
 
 def _build_review_prompt(draft: str) -> str:
     return f"""你是独立编辑，对以下医疗AI公众号文章进行严格审核。
-只输出JSON批注，不要重写文章，不要输出JSON以外的任何内容。评分要严格，不要虚高。
+只输出JSON批注，不要重写文章，不要输出JSON以外的任何内容。
 
 文章：
 {draft}
 
-审核要求：
-1. 每条issue必须包含：原文定位（引用原文短句）+ 问题说明 + 修改建议。
-2. issues输出3-5条，按优先级排序。
-3. 至少1条issue检查事实可信度：是否有无法核实的数据、编造的引用细节、过度夸大的结论、绝对化表述。
-4. 如有冗余段落或无新信息的句子，在cut_candidates中指出。
-5. 不要重写全文。
-6. 检查"决策价值"：目标读者（医疗AI产品经理/医院信息化负责人）读完，能得到什么具体判断或行动参考？如果全文只是"介绍了什么技术/发生了什么事"而没有"所以你应该/可以怎么做"，作为high priority issue输出。
+## 评分锚点（校准你的评分尺度）
+- 9-10分：读完让人想立刻转发给同事，有明确可执行的洞察，数据扎实
+- 7-8分：专业可靠，有价值，但缺少让人"哇"的亮点或不够聚焦
+- 5-6分：信息准确但像综述，读完不知道"所以呢"，缺乏判断
+- 3-4分：空洞、套话多、或逻辑混乱
+- 1-2分：有事实错误、编造数据、或完全跑题
+
+## 审核要求
+1. 每条issue包含：原文定位 + 问题说明 + 修改建议，输出3-5条，按优先级排序。
+2. 至少1条issue检查事实可信度：是否有无法核实的数据、编造引用、绝对化表述。
+3. 检查"决策价值"：读者读完能得到什么具体判断或行动参考？如果只是"介绍了什么"而没有"所以你应该怎么做"，作为high priority issue。
+4. 检查段落逻辑衔接：相邻两段之间是否有明确的因果、递进或转折关系？如果前后两段各说各的、缺少连接逻辑，作为medium priority issue指出，并给出具体衔接改法。
+5. 如有冗余句子，在cut_candidates中指出。
 
 输出JSON：
 ```json
@@ -188,7 +246,6 @@ def _build_review_prompt(draft: str) -> str:
     "depth": 0-10,
     "readability": 0-10,
     "credibility": 0-10,
-    "viral": 0-10,
     "decision_value": 0-10,
     "overall": 0-10
   }},
@@ -210,7 +267,6 @@ def _build_review_prompt(draft: str) -> str:
   }}
 }}
 ```"""
-
 
 def _parse_review(review_text: str) -> dict:
     try:
@@ -240,7 +296,7 @@ def _build_polish_prompt(draft_v1: str, review_data: dict) -> str:
         key_fix_text = f"最关键修改：「{key_fix.get('location','')}」→ {key_fix.get('suggestion','')}（原因：{key_fix.get('reason','')}）"
     title_suggest = review_data.get("title_suggestion", "")
 
-    return f"""你是微信公众号终稿编辑，专注于医疗AI方向，目标是让文章达到「Medical AI」「量子位医疗」的传播水准。
+    return f"""你是微信公众号终稿编辑。对文章做定向修改，只改审核指出的问题，其余不动。
 
 原文：
 {draft_v1}
@@ -251,27 +307,21 @@ def _build_polish_prompt(draft_v1: str, review_data: dict) -> str:
 {f"标题建议：{title_suggest}" if title_suggest else ""}
 {key_fix_text}
 
-修改要求：
-1. 针对审核意见逐一修改，优先落实high优先级问题。
-2. 【重要】保留原文的核心结构和语气风格，只做局部改写，不要重写全文。
-3. 审核意见未提到的地方，不要动。
-4. 若有可删减位置，优先压缩而不是改写。
-5. **检查开头**：如果开头第一句是废话（"近年来""随着AI发展""在医疗领域"等），必须改成一个具体数字、临床场景或尖锐问题。
-6. **检查结尾**：如果结尾是空喊口号，改成一个明确判断或对读者有用的行动建议。
-7. 【排版规范】
-   - 小标题用结论句，加粗，每个小标题下优先用列表承载核心信息
-   - 每条列表项必须包含具体数字、机构名、案例或可核实的事实，禁止纯概念性列表（只有名词没有数据）
-   - 关键数字和结论句加粗，每段最多1处
-   - 段落之间空行，保持视觉节奏
-8. 【禁用词】替换以下词语："下半场""上半场""深水区""新范式""新赛道""赋能""重塑""颠覆""生态闭环""闭环""破局""内卷""弯道超车""降维打击""护城河""数智化""智慧医疗""数字化转型""AI赋能""最后一公里""全链条""底层逻辑""顶层设计"。
-9. 给出3个备选标题，风格必须真正不同（不是换几个词）：
-   - **判断型**：直接给出有争议的观点，让读者想反驳或想分享
-   - **数字型**：用文中最震撼的数据做标题钩子
-   - **场景型**：代入一个具体人物（医生/患者/院长）的真实困境
-   每个标题控制在20字以内，口语化，不堆术语。
-10. 在2-3处最有判断力的句子前加 ★ 标记。
-11. 保持全文1000-1500字，偏长优先压缩。
-12. 【参考文献】原样保留，不得修改来源名称、时间、链接；若某条有原文链接但未写出，补上。
+## 修改原则（只有3条，严格遵守）
+1. **只改审核提到的问题**，优先落实 high priority。没提到的地方一个字不动。
+2. **保持原文的语气、节奏和结构**。你是在打磨，不是重写。
+3. **保持1000-1500字**，偏长就压缩，不扩写。
+
+## 附加任务
+- 给出3个备选标题（判断型/数字型/场景型），每个≤20字，口语化
+- 在2-3处最有判断力的句子前加 ★ 标记
+- 参考文献原样保留
+
+## 排版规范
+- 小标题用结论句，加粗，每个小标题下优先用列表承载核心信息
+- 每条列表项必须包含具体数字、机构名、案例或可核实的事实，禁止纯概念性列表（只有名词没有数据）
+- 关键数字和结论句加粗，每段最多1处
+- 段落之间空行，保持视觉节奏
 
 输出格式：
 【备选标题】
@@ -281,7 +331,6 @@ def _build_polish_prompt(draft_v1: str, review_data: dict) -> str:
 
 【正文】
 （直接输出终稿，末尾保留参考文献，无需解释）"""
-
 
 def _extract_title(text: str, fallback: str = "") -> str:
     if "【备选标题】" in text:
@@ -332,15 +381,25 @@ def generate_wechat_article(article_ids: list, style_hint: str = "") -> dict:
         for i, r in enumerate(selected_rows)
     ])
 
-    draft_prompt = _build_draft_prompt(articles_text)
+    # ── 新增：素材萃取 ──────────────────────────────────────
+    print("▶ 正在萃取素材要点...")
+    extracted_points = _extract_key_points(client, articles_text)
+    if extracted_points:
+        print(f"✓ 素材萃取完成（{len(extracted_points)}字）")
+
+    system_msg, user_msg = _build_draft_prompt(articles_text, extracted_points)
 
     # ── 第一轮：并行生成3篇初稿 ──────────────────────────────
     drafts = [None, None, None]
     def gen_draft(idx):
         try:
             r = client.chat.completions.create(
-                model="deepseek-chat", timeout=90, max_tokens=2000,
-                messages=[{"role": "user", "content": draft_prompt}]
+                model="deepseek-chat", timeout=120, max_tokens=3500,
+                temperature=0.75,
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg}
+                ]
             )
             drafts[idx] = r.choices[0].message.content.strip()
         except Exception as e:
@@ -396,8 +455,12 @@ def generate_wechat_article(article_ids: list, style_hint: str = "") -> dict:
         def gen_extra(idx):
             try:
                 r = client.chat.completions.create(
-                    model="deepseek-chat", timeout=90, max_tokens=2000,
-                    messages=[{"role": "user", "content": draft_prompt}]
+                    model="deepseek-chat", timeout=120, max_tokens=3500,
+                    temperature=0.75,
+                    messages=[
+                        {"role": "system", "content": system_msg},
+                        {"role": "user", "content": user_msg}
+                    ]
                 )
                 extra_drafts[idx] = r.choices[0].message.content.strip()
             except Exception as e:
@@ -470,7 +533,8 @@ def generate_wechat_article(article_ids: list, style_hint: str = "") -> dict:
     # ── 第三轮：对最优初稿润色 ───────────────────────────────
     polish_prompt = _build_polish_prompt(draft_v1, review_data)
     resp3 = client.chat.completions.create(
-        model="deepseek-chat", timeout=90, max_tokens=2200,
+        model="deepseek-chat", timeout=120, max_tokens=4000,
+        temperature=0.3,
         messages=[{"role": "user", "content": polish_prompt}]
     )
     final_article = resp3.choices[0].message.content.strip() + ARTICLE_FOOTER
