@@ -95,17 +95,21 @@ def cmd_daily(args):
     print("每日内容Pipeline 开始")
     print("=" * 50)
 
-    print("\n[1/3] 抓取RSS热点...")
+    print("\n[1/4] 抓取RSS热点...")
     from scrapers.rss import fetch_all
     fetch_all(db_path=args.db)
 
-    print("\n[2/3] AI评分筛选...")
+    print("\n[2/4] AI评分筛选...")
     from analyze import score_articles
     score_articles(limit=30, db_path=args.db)
 
-    print("\n[3/3] 生成标题建议...")
+    print("\n[3/4] 生成标题建议...")
     from analyze import recommend_titles
     recommend_titles(topic=args.topic, db_path=args.db)
+
+    print("\n[4/4] 关键词订阅推送...")
+    from mailer import run_daily_push
+    run_daily_push(db_path=args.db)
 
     print("\n" + "=" * 50)
     print("✓ 每日Pipeline完成！")

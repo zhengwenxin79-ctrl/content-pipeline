@@ -217,8 +217,11 @@ def _build_draft_prompt(articles_text: str, extracted_points: str = "") -> tuple
     return system_msg, user_msg
 
 def _build_review_prompt(draft: str) -> str:
+    today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y年%m月%d日")
     return f"""你是独立编辑，对以下医疗AI公众号文章进行严格审核。
 只输出JSON批注，不要重写文章，不要输出JSON以外的任何内容。
+
+今天日期：{today}（审核时以此为准，不要将今天或更早的日期判断为"未来日期"）
 
 文章：
 {draft}
@@ -532,12 +535,22 @@ def generate_wechat_article(article_ids: list, style_hint: str = "") -> dict:
 
     # ── 第三轮：对最优初稿润色 ───────────────────────────────
     polish_prompt = _build_polish_prompt(draft_v1, review_data)
-    resp3 = client.chat.completions.create(
-        model="deepseek-chat", timeout=120, max_tokens=4000,
-        temperature=0.3,
-        messages=[{"role": "user", "content": polish_prompt}]
+    polish_client = OpenAI(
+        api_key=DEEPSEEK_API_KEY,
+        base_url="https://api.deepseek.com",
+        timeout=90,  # 连接级别超时，确保90s后真正断开
     )
-    final_article = resp3.choices[0].message.content.strip() + ARTICLE_FOOTER
+    try:
+        resp3 = polish_client.chat.completions.create(
+            model="deepseek-chat", max_tokens=4000,
+            temperature=0.3,
+            messages=[{"role": "user", "content": polish_prompt}]
+        )
+        final_article = resp3.choices[0].message.content.strip() + ARTICLE_FOOTER
+        print("✓ 第三轮润色完成")
+    except Exception as e:
+        print(f"⚠ 第三轮润色超时或失败（{e}），使用最优初稿作为终稿")
+        final_article = draft_v1 + ARTICLE_FOOTER
     draft_v2 = f"[GPT-4.1审核批注]\n{review_text}"
     title = _extract_title(final_article)
 
@@ -787,13 +800,23 @@ def generate_article_from_recommendation(rec_data: dict) -> dict:
 【正文】
 （直接输出终稿，末尾保留参考文献，无需解释）"""
 
-    resp3 = client.chat.completions.create(
-        model="deepseek-chat",
+    polish_client2 = OpenAI(
+        api_key=DEEPSEEK_API_KEY,
+        base_url="https://api.deepseek.com",
         timeout=90,
-        max_tokens=2200,
-        messages=[{"role": "user", "content": polish_prompt}]
     )
-    final_article = resp3.choices[0].message.content.strip() + ARTICLE_FOOTER
+    try:
+        resp3 = polish_client2.chat.completions.create(
+            model="deepseek-chat",
+            max_tokens=2200,
+            temperature=0.3,
+            messages=[{"role": "user", "content": polish_prompt}]
+        )
+        final_article = resp3.choices[0].message.content.strip() + ARTICLE_FOOTER
+        print("✓ 第三轮润色完成")
+    except Exception as e:
+        print(f"⚠ 第三轮润色超时或失败（{e}），使用最优初稿作为终稿")
+        final_article = draft_v1 + ARTICLE_FOOTER
     draft_v2 = f"[GPT-4.1审核批注]\n{review_text}"
 
     # 提取标题：新格式用【正文】分隔，从【备选标题】中取第一个
@@ -1510,6 +1533,7 @@ HTML = """<!DOCTYPE html>
   <div class="tab" id="tab-wechat" onclick="switchTab('wechat')">💬 公众号分析</div>
   <div class="tab" id="tab-starred" onclick="switchTab('starred')">⭐ 收藏</div>
   <div class="tab" id="tab-drafts" onclick="switchTab('drafts')">📝 草稿箱 <span id="draftBadge" style="display:none;background:#667eea;color:white;border-radius:10px;font-size:11px;padding:1px 7px;margin-left:4px">0</span></div>
+  <div class="tab" id="tab-subscribe" onclick="switchTab('subscribe')">📬 关键词订阅</div>
 </div>
 
 <div class="toolbar" id="toolbar-digest">
@@ -1584,6 +1608,53 @@ HTML = """<!DOCTYPE html>
       <button class="btn btn-secondary" onclick="loadDrafts()">🔃 刷新</button>
     </div>
     <div id="draftsGrid" style="display:grid;gap:16px"></div>
+  </div>
+</div>
+
+<!-- 订阅Tab -->
+<div class="page" id="page-subscribe" style="display:none">
+  <div class="main">
+    <div style="margin-bottom:20px">
+      <div style="font-size:18px;font-weight:700;color:#2d3748">📬 关键词订阅</div>
+      <div style="font-size:13px;color:#718096;margin-top:4px">设置关键词，每日自动从抓取的文章中筛选推送到邮箱</div>
+    </div>
+
+    <!-- 订阅表单 -->
+    <div style="background:white;border-radius:12px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:24px">
+      <div style="font-size:15px;font-weight:600;color:#2d3748;margin-bottom:16px">新增 / 修改订阅</div>
+      <div style="display:grid;gap:14px">
+        <div>
+          <label style="font-size:13px;font-weight:500;color:#4a5568;display:block;margin-bottom:6px">邮箱地址 *</label>
+          <input id="sub-email" type="email" placeholder="your@email.com"
+            style="width:100%;box-sizing:border-box;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none">
+        </div>
+        <div>
+          <label style="font-size:13px;font-weight:500;color:#4a5568;display:block;margin-bottom:6px">关键词 * <span style="font-weight:400;color:#a0aec0">（多个关键词用逗号分隔，中英文均可）</span></label>
+          <input id="sub-keywords" type="text" placeholder="心电图,ECG,AI诊断,病理切片"
+            style="width:100%;box-sizing:border-box;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none">
+        </div>
+        <div>
+          <label style="font-size:13px;font-weight:500;color:#4a5568;display:block;margin-bottom:6px">DeepSeek API Key <span style="font-weight:400;color:#a0aec0">（用于生成中文摘要，留空则只推送标题和链接）</span></label>
+          <input id="sub-apikey" type="password" placeholder="sk-..."
+            style="width:100%;box-sizing:border-box;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none">
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button onclick="doSubscribe()" style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;padding:9px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">✅ 订阅</button>
+          <button onclick="doUpdate()" style="background:#f7fafc;color:#4a5568;border:1.5px solid #e2e8f0;padding:9px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">✏️ 修改关键词</button>
+          <button onclick="doCancel()" style="background:#fff5f5;color:#e53e3e;border:1.5px solid #fed7d7;padding:9px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">🗑 退订</button>
+        </div>
+        <div id="sub-msg" style="font-size:13px;display:none;padding:8px 12px;border-radius:6px"></div>
+      </div>
+    </div>
+
+    <!-- 当前订阅列表 -->
+    <div style="background:white;border-radius:12px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,0.08)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div style="font-size:15px;font-weight:600;color:#2d3748">当前订阅列表</div>
+        <button onclick="loadSubscriptions()" style="background:#f7fafc;color:#4a5568;border:1.5px solid #e2e8f0;padding:6px 14px;border-radius:6px;font-size:13px;cursor:pointer">🔃 刷新</button>
+      </div>
+      <div id="sub-list" style="font-size:13px;color:#a0aec0;text-align:center;padding:24px 0">加载中...</div>
+    </div>
   </div>
 </div>
 
@@ -1820,6 +1891,7 @@ function switchTab(tab) {
   if (tab === 'wechat') loadWechatArticles();
   if (tab === 'starred') loadStarred();
   if (tab === 'drafts') loadDrafts();
+  if (tab === 'subscribe') loadSubscriptions();
 }
 
 // ── 收藏功能 ──────────────────────────────────────────
@@ -2585,6 +2657,74 @@ function fbLayoutRich(html) {
   catch(e) { showToast('复制失败，请手动复制'); }
   sel.removeAllRanges(); document.body.removeChild(d);
 }
+
+// ── 关键词订阅 ────────────────────────────────────────────
+function showSubMsg(msg, ok) {
+  const el = document.getElementById('sub-msg');
+  el.textContent = msg;
+  el.style.display = 'block';
+  el.style.background = ok ? '#f0fff4' : '#fff5f5';
+  el.style.color = ok ? '#276749' : '#c53030';
+  el.style.border = ok ? '1px solid #9ae6b4' : '1px solid #feb2b2';
+}
+
+function getSubForm() {
+  return {
+    email: document.getElementById('sub-email').value.trim(),
+    keywords: document.getElementById('sub-keywords').value.trim(),
+    api_key: document.getElementById('sub-apikey').value.trim()
+  };
+}
+
+async function doSubscribe() {
+  const data = getSubForm();
+  if (!data.email || !data.keywords) { showSubMsg('邮箱和关键词不能为空', false); return; }
+  const res = await fetch('/api/subscribe', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+  const json = await res.json();
+  showSubMsg(json.msg, json.ok);
+  if (json.ok) loadSubscriptions();
+}
+
+async function doUpdate() {
+  const data = getSubForm();
+  if (!data.email || !data.keywords) { showSubMsg('邮箱和关键词不能为空', false); return; }
+  const res = await fetch('/api/subscribe/update', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+  const json = await res.json();
+  showSubMsg(json.msg, json.ok);
+  if (json.ok) loadSubscriptions();
+}
+
+async function doCancel() {
+  const email = document.getElementById('sub-email').value.trim();
+  if (!email) { showSubMsg('请输入要退订的邮箱', false); return; }
+  if (!confirm(`确认退订 ${email}？`)) return;
+  const res = await fetch('/api/subscribe/cancel', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email})});
+  const json = await res.json();
+  showSubMsg(json.msg, json.ok);
+  if (json.ok) loadSubscriptions();
+}
+
+async function loadSubscriptions() {
+  const list = document.getElementById('sub-list');
+  list.innerHTML = '加载中...';
+  const res = await fetch('/api/subscribe/list');
+  const json = await res.json();
+  const subs = json.subscriptions || [];
+  if (subs.length === 0) {
+    list.innerHTML = '<div style="text-align:center;padding:24px;color:#a0aec0">暂无订阅</div>';
+    return;
+  }
+  list.innerHTML = subs.map(s => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid #f7fafc;gap:12px;flex-wrap:wrap">
+      <div>
+        <div style="font-weight:600;color:#2d3748;font-size:14px">${s.email}</div>
+        <div style="color:#667eea;font-size:12px;margin-top:3px">🔑 ${s.keywords}</div>
+        <div style="color:#a0aec0;font-size:11px;margin-top:2px">订阅于 ${s.created_at ? s.created_at.slice(0,10) : '-'} · 上次推送 ${s.last_sent_at ? s.last_sent_at.slice(0,10) : '未推送'}</div>
+      </div>
+      <span style="background:#f0fff4;color:#276749;padding:3px 10px;border-radius:12px;font-size:12px">启用中</span>
+    </div>
+  `).join('');
+}
 </script>
 
 <!-- 微信排版弹窗 -->
@@ -2834,6 +2974,52 @@ class Handler(BaseHTTPRequestHandler):
                     _gen_tasks[tid] = {"status": "error", "result": {"error": str(e)}}
             threading.Thread(target=_run_rec, args=(task_id, rec_data), daemon=True).start()
             self.send_json({"task_id": task_id})
+
+        elif self.path == "/api/subscribe":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            email = body.get("email", "").strip()
+            keywords = body.get("keywords", "").strip()
+            api_key = body.get("api_key", "").strip()
+            if not email or not keywords:
+                self.send_json({"ok": False, "msg": "邮箱和关键词不能为空"}, 400)
+                return
+            from db import add_subscription
+            result = add_subscription(email, keywords, api_key or None)
+            self.send_json(result)
+
+        elif self.path == "/api/subscribe/update":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            email = body.get("email", "").strip()
+            keywords = body.get("keywords", "").strip()
+            api_key = body.get("api_key", "").strip()
+            if not email or not keywords:
+                self.send_json({"ok": False, "msg": "邮箱和关键词不能为空"}, 400)
+                return
+            from db import update_subscription
+            result = update_subscription(email, keywords, api_key or None)
+            self.send_json(result)
+
+        elif self.path == "/api/subscribe/cancel":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            email = body.get("email", "").strip()
+            if not email:
+                self.send_json({"ok": False, "msg": "邮箱不能为空"}, 400)
+                return
+            from db import cancel_subscription
+            result = cancel_subscription(email)
+            self.send_json(result)
+
+        elif self.path == "/api/subscribe/list":
+            from db import get_active_subscriptions
+            subs = get_active_subscriptions()
+            # 不返回api_key明文
+            safe = [{"id": s["id"], "email": s["email"], "keywords": s["keywords"],
+                     "active": s["active"], "created_at": s["created_at"],
+                     "last_sent_at": s["last_sent_at"]} for s in subs]
+            self.send_json({"subscriptions": safe})
 
         else:
             self.send_response(404)
