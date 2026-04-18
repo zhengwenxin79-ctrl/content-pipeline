@@ -19,7 +19,24 @@ SMTP_PORT = 465
 SENDER_EMAIL = os.environ.get("MAIL_SENDER", "2471149840@qq.com")
 SENDER_PASSWD = os.environ.get("MAIL_PASSWD", "rwezxcacyrepebjh")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-DB_PATH = "corpus/corpus.db"
+XHS_COOKIE = os.environ.get("XHS_COOKIE", "")
+DB_PATH = os.environ.get("DB_PATH", "corpus/corpus.db")
+
+
+# ── 小红书抓取 ────────────────────────────────────────────────
+
+def fetch_xhs_for_keywords(keywords: str, cookie: str = "", candidate_pool: int = 5) -> list:
+    """按关键词抓取小红书热门笔记"""
+    if not cookie:
+        return []
+    try:
+        from scrapers.xhs_fetcher import fetch_xhs_notes
+        kws = [k.strip() for k in keywords.split(",") if k.strip()]
+        results = fetch_xhs_notes(kws, candidate_pool=candidate_pool, cookies_str=cookie)
+        return results
+    except Exception as e:
+        print(f"⚠ 小红书抓取失败: {e}")
+        return []
 
 
 # ── 关键词匹配 ────────────────────────────────────────────────
@@ -95,7 +112,7 @@ def generate_summaries(articles: list, api_key: str) -> list:
 
 # ── HTML邮件模板 ───────────────────────────────────────────────
 
-def build_html(keywords: str, articles: list, date_str: str) -> str:
+def build_html(keywords: str, articles: list, date_str: str, xhs_notes: list = None) -> str:
     kw_tags = "".join([
         f'<span style="background:#ebf4ff;color:#3182ce;padding:2px 8px;border-radius:12px;font-size:12px;margin-right:6px">{k.strip()}</span>'
         for k in keywords.split(",") if k.strip()
@@ -124,6 +141,38 @@ def build_html(keywords: str, articles: list, date_str: str) -> str:
     if not articles_html:
         articles_html = '<div style="text-align:center;padding:32px;color:#a0aec0">今日暂无匹配文章</div>'
 
+    # 小红书板块
+    xhs_section = ""
+    if xhs_notes:
+        xhs_items = ""
+        for i, n in enumerate(xhs_notes, 1):
+            url = n.get("url") or "#"
+            title = n.get("title") or "无标题"
+            liked = n.get("liked_count") or 0
+            content = (n.get("content") or "")[:80]
+            if content:
+                content += "..."
+            xhs_items += f"""
+            <div style="padding:12px 0;border-bottom:1px solid #fff0f0">
+              <div style="font-size:14px;font-weight:600;color:#2d3748;margin-bottom:4px">
+                <a href="{url}" style="color:#2d3748;text-decoration:none">{i}. {title}</a>
+              </div>
+              {"" if not content else f'<div style="font-size:12px;color:#718096;margin-bottom:6px;line-height:1.5">{content}</div>'}
+              <div style="font-size:12px;color:#a0aec0">
+                ❤️ {liked} 点赞 &nbsp;·&nbsp; <a href="{url}" style="color:#fe2c55">查看笔记 →</a>
+              </div>
+            </div>"""
+        xhs_section = f"""
+    <div style="margin:0 32px 24px;border-radius:8px;overflow:hidden;border:1px solid #ffe4e8">
+      <div style="background:linear-gradient(135deg,#fe2c55,#ff6b81);padding:12px 16px">
+        <span style="font-size:14px;font-weight:700;color:white">📕 小红书热门笔记</span>
+        <span style="font-size:12px;color:rgba(255,255,255,0.8);margin-left:8px">按关键词筛选</span>
+      </div>
+      <div style="padding:0 16px;background:#fffafa">
+        {xhs_items}
+      </div>
+    </div>"""
+
     return f"""<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -146,6 +195,8 @@ def build_html(keywords: str, articles: list, date_str: str) -> str:
     <div style="padding:8px 32px 24px">
       {articles_html}
     </div>
+
+    {xhs_section}
 
     <!-- 尾部 -->
     <div style="background:#f7fafc;padding:20px 32px;border-top:1px solid #edf2f7;text-align:center">
@@ -219,9 +270,14 @@ def run_daily_push(db_path: str = DB_PATH):
         # 生成摘要
         articles = generate_summaries(articles, api_key or DEEPSEEK_API_KEY)
 
+        # 抓取小红书热门笔记
+        print(f"  → 抓取小红书热门笔记...")
+        xhs_notes = fetch_xhs_for_keywords(keywords, cookie=XHS_COOKIE, candidate_pool=5)
+        print(f"  → 小红书抓到 {len(xhs_notes)} 篇")
+
         # 构建并发送邮件
         subject = f"【医疗AI日报】{keywords.split(',')[0]} | 今日{len(articles)}篇 · {date_str}"
-        html = build_html(keywords, articles, date_str)
+        html = build_html(keywords, articles, date_str, xhs_notes=xhs_notes)
 
         ok = send_email(email, subject, html)
         if ok:
@@ -257,8 +313,11 @@ def push_single(email: str, db_path: str = DB_PATH) -> dict:
 
     articles = generate_summaries(articles, api_key or DEEPSEEK_API_KEY)
 
+    # 抓取小红书热门笔记
+    xhs_notes = fetch_xhs_for_keywords(keywords, cookie=XHS_COOKIE, candidate_pool=5)
+
     subject = f"【医疗AI情报】{keywords.split(',')[0]} | {len(articles)}篇精选 · {date_str}"
-    html = build_html(keywords, articles, date_str)
+    html = build_html(keywords, articles, date_str, xhs_notes=xhs_notes)
 
     ok = send_email(email, subject, html)
     if ok:

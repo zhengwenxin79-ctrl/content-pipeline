@@ -16,7 +16,8 @@ from db import get_conn, stats
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_MODELS_BASE_URL = "https://models.inference.ai.azure.com"
-DB_PATH = "corpus/corpus.db"
+DB_PATH = os.environ.get("DB_PATH", "corpus/corpus.db")
+XHS_COOKIE = os.environ.get("XHS_COOKIE", "")
 
 # 全局任务状态
 task_status = {"running": False, "log": [], "step": ""}
@@ -3084,7 +3085,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    port = 8888
+    port = int(os.environ.get("PORT", 8888))
     print(f"✓ 服务启动：http://localhost:{port}")
     print("  按 Ctrl+C 停止")
     HTTPServer(("", port), Handler).serve_forever()

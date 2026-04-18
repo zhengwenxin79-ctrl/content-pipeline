@@ -22,3 +22,11 @@ prompts/*_副本.md
 __pycache__/
 *.pyc
 *.pyo
+
+# Node
+node_modules/
+package-lock.json
+
+# 日志
+*.log
+server.py.bak
