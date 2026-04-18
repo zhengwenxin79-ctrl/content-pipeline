@@ -1090,12 +1090,13 @@ def run_pipeline(topic=""):
     env = os.environ.copy()
     env["DEEPSEEK_API_KEY"] = DEEPSEEK_API_KEY
 
+    db_args = ["--db", DB_PATH]
     steps = [
-        ("抓取文章", ["python", "main.py", "fetch"]),
+        ("抓取文章", ["python", "main.py", "fetch"] + db_args),
         ("补充摘要", ["python", "-c",
-            f"from scrapers.enrich import enrich_articles; enrich_articles(limit=60, min_score=6.0, delay=0.8, deepseek_key='{DEEPSEEK_API_KEY}')"]),
-        ("AI评分", ["python", "main.py", "score", "--limit", "30"]),
-        ("生成摘要", ["python", "main.py", "digest"] + (["--topic", topic] if topic else [])),
+            f"from scrapers.enrich import enrich_articles; enrich_articles(limit=60, min_score=6.0, delay=0.8, deepseek_key='{DEEPSEEK_API_KEY}', db_path='{DB_PATH}')"]),
+        ("AI评分", ["python", "main.py", "score", "--limit", "30"] + db_args),
+        ("生成摘要", ["python", "main.py", "digest"] + db_args + (["--topic", topic] if topic else [])),
     ]
 
     for step_name, cmd in steps:
