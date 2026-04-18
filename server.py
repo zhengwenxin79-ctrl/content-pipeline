@@ -1101,8 +1101,9 @@ def run_pipeline(topic=""):
     for step_name, cmd in steps:
         task_status["step"] = step_name
         task_status["log"].append(f"▶ {step_name}...")
+        python_exe = ".venv/bin/python" if os.path.exists(".venv/bin/python") else "python"
         result = subprocess.run(
-            [".venv/bin/python"] + cmd[1:],
+            [python_exe] + cmd[1:],
             capture_output=True, text=True, env=env, cwd=os.getcwd()
         )
         if result.stdout:
