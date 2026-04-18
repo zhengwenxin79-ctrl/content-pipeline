@@ -3085,6 +3085,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    # 启动时自动初始化数据库（云端首次部署无数据库时必须）
+    from db import init_db
+    init_db(db_path=DB_PATH)
+
     port = int(os.environ.get("PORT", 8888))
     print(f"✓ 服务启动：http://localhost:{port}")
     print("  按 Ctrl+C 停止")
