@@ -1094,7 +1094,7 @@ def run_pipeline(topic=""):
         ("抓取文章", ["python", "main.py", "fetch"]),
         ("补充摘要", ["python", "-c",
             f"from scrapers.enrich import enrich_articles; enrich_articles(limit=60, min_score=6.0, delay=0.8, deepseek_key='{DEEPSEEK_API_KEY}')"]),
-        ("AI评分", ["python", "main.py", "score", "--limit", "150"]),
+        ("AI评分", ["python", "main.py", "score", "--limit", "30"]),
         ("生成摘要", ["python", "main.py", "digest"] + (["--topic", topic] if topic else [])),
     ]
 

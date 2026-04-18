@@ -47,8 +47,8 @@ def score_articles(limit: int = 20, db_path: str = "corpus/corpus.db"):
         return
 
     client = get_client()
-    # 每批最多15篇，避免JSON截断
-    BATCH = 15
+    # 每批最多25篇，避免JSON截断
+    BATCH = 25
     all_scored = 0
     for batch_start in range(0, len(rows), BATCH):
         batch = rows[batch_start:batch_start + BATCH]
