@@ -96,6 +96,27 @@ def init_db(db_path: str = "corpus/corpus.db"):
         CREATE INDEX IF NOT EXISTS idx_subscriptions_active ON subscriptions(active);
     """)
     conn.commit()
+
+    # 迁移：为旧数据库补充后来新增的列和表（ALTER TABLE 对已有列会报错，用 try 忽略）
+    migrations = [
+        "ALTER TABLE articles ADD COLUMN category TEXT",
+        "ALTER TABLE drafts ADD COLUMN draft_v1 TEXT",
+        "ALTER TABLE drafts ADD COLUMN draft_v2 TEXT",
+        "ALTER TABLE drafts ADD COLUMN review_json TEXT",
+        "ALTER TABLE drafts ADD COLUMN best_draft TEXT",
+        "ALTER TABLE drafts ADD COLUMN source_article_ids TEXT",
+        "ALTER TABLE drafts ADD COLUMN generate_type TEXT",
+        """CREATE TABLE IF NOT EXISTS app_state (
+            key   TEXT PRIMARY KEY,
+            value TEXT
+        )""",
+    ]
+    for sql in migrations:
+        try:
+            conn.execute(sql)
+        except Exception:
+            pass  # 列/表已存在，忽略
+    conn.commit()
     conn.close()
     print("✓ 数据库初始化完成")
 
