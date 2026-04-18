@@ -1,5 +1,7 @@
 # 医疗AI每日情报系统
 
+> 参考项目：[Daily-Digest-Assistant](https://github.com/yzbcs/Daily-Digest-Assistant)
+
 自动抓取医疗AI领域顶刊论文、机构动态、商业落地资讯，经 DeepSeek 评分筛选后，通过三轮生成流程（初稿→审核→润色）产出可直接发布的微信公众号文章。支持关键词订阅，每日自动推送邮件（含小红书热门笔记）。
 
 ## 功能
