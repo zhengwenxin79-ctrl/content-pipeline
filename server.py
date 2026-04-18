@@ -949,7 +949,7 @@ def delete_draft(draft_id: int) -> bool:
     return True
 
 
-def get_writing_recommendations(days: int = 3) -> list:
+def get_writing_recommendations(days: int = 3, topic: str = "") -> list:
     """
     基于今日收集的文章，按照 daily-wechat-research-writer 的评分框架
     推荐2-3个公众号写作方向，每个包含选题卡片
@@ -970,8 +970,8 @@ def get_writing_recommendations(days: int = 3) -> list:
     if not articles:
         return []
 
-    # 检查缓存（用文章ID列表做hash）
-    digest_hash = str(sorted([a["id"] for a in articles]))
+    # 检查缓存（用文章ID列表 + topic 做hash，topic变化则重新分析）
+    digest_hash = str(sorted([a["id"] for a in articles])) + "|" + topic
     if _recommend_cache["data"] and _recommend_cache["digest_hash"] == digest_hash:
         return _recommend_cache["data"]
 
@@ -983,7 +983,9 @@ def get_writing_recommendations(days: int = 3) -> list:
         for a in articles
     ])
 
-    prompt = f"""你是医疗AI公众号「Medical AI」风格的资深主编。以下是今天收集到的文章列表，请推荐2-3个最有传播潜力的选题。
+    topic_hint = f"\n\n⚠️ 今日关注方向：「{topic}」——请优先从文章列表中挑选与此方向相关的素材；若无相关素材则说明并推荐次优选题。" if topic else ""
+
+    prompt = f"""你是医疗AI公众号「Medical AI」风格的资深主编。以下是今天收集到的文章列表，请推荐2-3个最有传播潜力的选题。{topic_hint}
 
 ## 爆款选题的核心标准（优先满足）
 1. **反常识**：读者以为A，实际上是B——能让人产生"原来如此"的顿悟感
@@ -1612,7 +1614,7 @@ HTML = """<!DOCTYPE html>
 </div>
 
 <!-- 订阅Tab -->
-<div class="page" id="page-subscribe" style="display:none">
+<div class="page" id="page-subscribe">
   <div class="main">
     <div style="margin-bottom:20px">
       <div style="font-size:18px;font-weight:700;color:#2d3748">📬 关键词订阅</div>
@@ -1797,7 +1799,8 @@ async function loadRecommendations() {
   cards.innerHTML = '<div style="color:#a0aec0;font-size:13px">正在生成写作推荐，约需15秒...</div>';
   sec.style.display = 'block';
 
-  const res = await fetch('/api/recommend');
+  const topic = document.getElementById('topicInput').value.trim();
+  const res = await fetch('/api/recommend' + (topic ? `?topic=${encodeURIComponent(topic)}` : ''));
   const data = await res.json();
   const recs = data.recommendations || [];
 
@@ -2721,9 +2724,38 @@ async function loadSubscriptions() {
         <div style="color:#667eea;font-size:12px;margin-top:3px">🔑 ${s.keywords}</div>
         <div style="color:#a0aec0;font-size:11px;margin-top:2px">订阅于 ${s.created_at ? s.created_at.slice(0,10) : '-'} · 上次推送 ${s.last_sent_at ? s.last_sent_at.slice(0,10) : '未推送'}</div>
       </div>
-      <span style="background:#f0fff4;color:#276749;padding:3px 10px;border-radius:12px;font-size:12px">启用中</span>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="background:#f0fff4;color:#276749;padding:3px 10px;border-radius:12px;font-size:12px">启用中</span>
+        <button onclick="pushNow('${s.email}', this)" style="background:#667eea;color:white;border:none;padding:5px 12px;border-radius:6px;font-size:12px;cursor:pointer">📬 立即推送</button>
+      </div>
     </div>
   `).join('');
+}
+
+async function pushNow(email, btn) {
+  btn.disabled = true;
+  btn.textContent = '推送中...';
+  try {
+    const res = await fetch('/api/subscribe/push', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email})
+    });
+    const json = await res.json();
+    if (json.ok) {
+      btn.textContent = '✓ 已发送';
+      btn.style.background = '#48bb78';
+      setTimeout(() => { btn.textContent = '📬 立即推送'; btn.style.background = '#667eea'; btn.disabled = false; }, 3000);
+    } else {
+      btn.textContent = json.msg || '发送失败';
+      btn.style.background = '#fc8181';
+      setTimeout(() => { btn.textContent = '📬 立即推送'; btn.style.background = '#667eea'; btn.disabled = false; }, 3000);
+    }
+  } catch(e) {
+    btn.textContent = '网络错误';
+    btn.style.background = '#fc8181';
+    setTimeout(() => { btn.textContent = '📬 立即推送'; btn.style.background = '#667eea'; btn.disabled = false; }, 3000);
+  }
 }
 </script>
 
@@ -2835,7 +2867,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(task_status)
 
         elif path == "/api/recommend":
-            recs = get_writing_recommendations(days=3)
+            from urllib.parse import parse_qs
+            qs = parse_qs(urlparse(self.path).query)
+            topic = qs.get("topic", [""])[0]
+            recs = get_writing_recommendations(days=3, topic=topic)
             self.send_json({"recommendations": recs})
 
         elif path == "/api/wechat":
@@ -2875,6 +2910,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True})
             except ValueError:
                 self.send_json({"error": "invalid id"}, 400)
+
+        elif path == "/api/subscribe/list":
+            from db import get_active_subscriptions
+            subs = get_active_subscriptions()
+            safe = [{"id": s["id"], "email": s["email"], "keywords": s["keywords"],
+                     "active": s["active"], "created_at": s["created_at"],
+                     "last_sent_at": s["last_sent_at"]} for s in subs]
+            self.send_json({"subscriptions": safe})
 
         else:
             self.send_response(404)
@@ -3020,6 +3063,20 @@ class Handler(BaseHTTPRequestHandler):
                      "active": s["active"], "created_at": s["created_at"],
                      "last_sent_at": s["last_sent_at"]} for s in subs]
             self.send_json({"subscriptions": safe})
+
+        elif self.path == "/api/subscribe/push":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            email = body.get("email", "").strip()
+            if not email:
+                self.send_json({"ok": False, "msg": "邮箱不能为空"}, 400)
+                return
+            try:
+                from mailer import push_single
+                result = push_single(email)
+                self.send_json(result)
+            except Exception as e:
+                self.send_json({"ok": False, "msg": str(e)})
 
         else:
             self.send_response(404)

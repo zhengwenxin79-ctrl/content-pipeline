@@ -231,5 +231,42 @@ def run_daily_push(db_path: str = DB_PATH):
     print(f"\n✓ 每日推送完成")
 
 
+def push_single(email: str, db_path: str = DB_PATH) -> dict:
+    """立即为指定邮箱推送一次，不受定时限制"""
+    cst = datetime.now(timezone(timedelta(hours=8)))
+    date_str = cst.strftime("%Y年%m月%d日")
+
+    subs = get_active_subscriptions(db_path)
+    sub = next((s for s in subs if s["email"] == email), None)
+    if not sub:
+        return {"ok": False, "msg": "未找到该邮箱的有效订阅"}
+
+    keywords = sub["keywords"]
+    encoded_key = sub.get("api_key") or ""
+    api_key = ""
+    if encoded_key:
+        try:
+            api_key = base64.b64decode(encoded_key.encode()).decode()
+        except Exception:
+            api_key = DEEPSEEK_API_KEY
+
+    # 扩大到3天，避免今日文章太少
+    articles = match_articles(keywords, days=3, db_path=db_path)
+    if not articles:
+        return {"ok": False, "msg": "近3天内没有匹配文章，无法推送"}
+
+    articles = generate_summaries(articles, api_key or DEEPSEEK_API_KEY)
+
+    subject = f"【医疗AI情报】{keywords.split(',')[0]} | {len(articles)}篇精选 · {date_str}"
+    html = build_html(keywords, articles, date_str)
+
+    ok = send_email(email, subject, html)
+    if ok:
+        update_last_sent(email, db_path)
+        return {"ok": True, "msg": f"已成功推送 {len(articles)} 篇文章至 {email}"}
+    else:
+        return {"ok": False, "msg": "邮件发送失败，请检查SMTP配置"}
+
+
 if __name__ == "__main__":
     run_daily_push()
