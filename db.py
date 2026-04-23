@@ -5,6 +5,8 @@ SQLite存储，三张核心表：articles（文章）、my_posts（自己的历�
 
 import sqlite3
 import json
+import hashlib
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -94,6 +96,15 @@ def init_db(db_path: str = "corpus/corpus.db"):
         CREATE INDEX IF NOT EXISTS idx_articles_quality ON articles(quality_score DESC);
         CREATE INDEX IF NOT EXISTS idx_my_posts_engagement ON my_posts(engagement_score DESC);
         CREATE INDEX IF NOT EXISTS idx_subscriptions_active ON subscriptions(active);
+
+        -- 用户账号表
+        CREATE TABLE IF NOT EXISTS users (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            email       TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at  TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
     """)
     conn.commit()
 
@@ -349,5 +360,45 @@ def stats(db_path: str = "corpus/corpus.db") -> dict:
             row = conn.execute(f"SELECT COUNT(*) as n FROM {table}").fetchone()
             result[table] = row["n"]
         return result
+    finally:
+        conn.close()
+
+
+def _hash_password(password: str) -> str:
+    salt = os.environ.get("AUTH_SALT", "medai-salt-2026")
+    return hashlib.sha256((salt + password).encode()).hexdigest()
+
+
+def register_user(email: str, password: str,
+                  db_path: str = "corpus/corpus.db") -> dict:
+    conn = get_conn(db_path)
+    try:
+        exists = conn.execute(
+            "SELECT id FROM users WHERE email = ?", (email,)
+        ).fetchone()
+        if exists:
+            return {"ok": False, "msg": "该邮箱已注册"}
+        conn.execute(
+            "INSERT INTO users (email, password_hash) VALUES (?, ?)",
+            (email, _hash_password(password))
+        )
+        conn.commit()
+        row = conn.execute("SELECT id, email FROM users WHERE email = ?", (email,)).fetchone()
+        return {"ok": True, "user": {"id": row["id"], "email": row["email"]}}
+    finally:
+        conn.close()
+
+
+def login_user(email: str, password: str,
+               db_path: str = "corpus/corpus.db") -> dict:
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT id, email FROM users WHERE email = ? AND password_hash = ?",
+            (email, _hash_password(password))
+        ).fetchone()
+        if not row:
+            return {"ok": False, "msg": "邮箱或密码错误"}
+        return {"ok": True, "user": {"id": row["id"], "email": row["email"]}}
     finally:
         conn.close()

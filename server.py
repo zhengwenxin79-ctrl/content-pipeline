@@ -6,12 +6,32 @@
 
 import os
 import json
+import secrets
 import threading
 import subprocess
 from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from db import get_conn, stats
+
+# session store: token -> {id, email}
+_sessions = {}
+
+
+def _make_session(user: dict) -> str:
+    token = secrets.token_hex(32)
+    _sessions[token] = user
+    return token
+
+
+def _get_session(handler):
+    cookie = handler.headers.get("Cookie", "")
+    for part in cookie.split(";"):
+        part = part.strip()
+        if part.startswith("session="):
+            token = part[len("session="):]
+            return _sessions.get(token)
+    return None
 
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
@@ -1528,9 +1548,12 @@ HTML = """<!DOCTYPE html>
 </head>
 <body>
 
-<div class="header">
-  <h1>🏥 医疗AI 每日情报</h1>
-  <p>顶刊论文 · 大组动态 · 商业落地</p>
+<div class="header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+  <div>
+    <h1>🏥 医疗AI 每日情报</h1>
+    <p>顶刊论文 · 大组动态 · 商业落地</p>
+  </div>
+  <div id="authArea" style="display:flex;align-items:center;gap:10px;flex-shrink:0"></div>
 </div>
 
 <div class="tabs">
@@ -1680,8 +1703,43 @@ HTML = """<!DOCTYPE html>
   <button class="btn btn-secondary" onclick="clearSelection()">清除选择</button>
 </div>
 
+<!-- 登录/注册弹窗 -->
+<div id="authModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:white;border-radius:16px;width:90%;max-width:400px;padding:32px 28px;box-shadow:0 20px 60px rgba(0,0,0,.2);position:relative">
+    <button onclick="closeAuthModal()" style="position:absolute;top:16px;right:20px;background:none;border:none;font-size:22px;color:#a0aec0;cursor:pointer;line-height:1">×</button>
+    <div style="display:flex;gap:0;margin-bottom:24px;border-bottom:2px solid #e2e8f0">
+      <button id="authTabLogin" onclick="switchAuthTab('login')"
+        style="flex:1;padding:10px;background:none;border:none;font-size:15px;font-weight:700;color:#667eea;border-bottom:3px solid #667eea;margin-bottom:-2px;cursor:pointer">登录</button>
+      <button id="authTabRegister" onclick="switchAuthTab('register')"
+        style="flex:1;padding:10px;background:none;border:none;font-size:15px;font-weight:600;color:#a0aec0;border-bottom:3px solid transparent;margin-bottom:-2px;cursor:pointer">注册</button>
+    </div>
+    <div style="display:grid;gap:14px">
+      <div>
+        <label style="font-size:13px;font-weight:500;color:#4a5568;display:block;margin-bottom:6px">邮箱</label>
+        <input id="authEmail" type="email" placeholder="your@email.com" autocomplete="email"
+          style="width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none"
+          onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e2e8f0'">
+      </div>
+      <div>
+        <label style="font-size:13px;font-weight:500;color:#4a5568;display:block;margin-bottom:6px">密码</label>
+        <input id="authPassword" type="password" placeholder="至少6位" autocomplete="current-password"
+          style="width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none"
+          onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e2e8f0'"
+          onkeydown="if(event.key==='Enter')doAuth()">
+      </div>
+      <div id="authMsg" style="font-size:13px;display:none;padding:8px 12px;border-radius:6px"></div>
+      <button onclick="doAuth()" id="authSubmitBtn"
+        style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;padding:11px;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;width:100%">登录</button>
+      <p id="authSwitchHint" style="text-align:center;font-size:13px;color:#718096;margin:0">
+        没有账号？<a href="#" onclick="switchAuthTab('register');return false" style="color:#667eea;font-weight:600">立即注册</a>
+      </p>
+    </div>
+  </div>
+</div>
+
 <script>
 let polling = null;
+let _currentUser = null;
 
 async function loadData() {
   const res = await fetch('/api/digest');
@@ -1757,6 +1815,7 @@ function renderDigest(digest) {
 }
 
 async function runPipeline() {
+  if (!requireLogin()) return;
   const topic = document.getElementById('topicInput').value.trim();
   const badge = document.getElementById('statusBadge');
   badge.textContent = '运行中...';
@@ -1866,10 +1925,130 @@ async function loadRecommendations() {
   `).join('');
 }
 
+// ── 认证 ──────────────────────────────────────────────
+let _authMode = 'login';
+
+function openAuthModal(mode) {
+  _authMode = mode || 'login';
+  switchAuthTab(_authMode);
+  document.getElementById('authEmail').value = '';
+  document.getElementById('authPassword').value = '';
+  document.getElementById('authMsg').style.display = 'none';
+  document.getElementById('authModal').style.display = 'flex';
+  setTimeout(() => document.getElementById('authEmail').focus(), 50);
+}
+
+function closeAuthModal() {
+  document.getElementById('authModal').style.display = 'none';
+}
+
+function switchAuthTab(tab) {
+  _authMode = tab;
+  const isLogin = tab === 'login';
+  document.getElementById('authTabLogin').style.cssText =
+    isLogin ? 'flex:1;padding:10px;background:none;border:none;font-size:15px;font-weight:700;color:#667eea;border-bottom:3px solid #667eea;margin-bottom:-2px;cursor:pointer'
+            : 'flex:1;padding:10px;background:none;border:none;font-size:15px;font-weight:600;color:#a0aec0;border-bottom:3px solid transparent;margin-bottom:-2px;cursor:pointer';
+  document.getElementById('authTabRegister').style.cssText =
+    !isLogin ? 'flex:1;padding:10px;background:none;border:none;font-size:15px;font-weight:700;color:#667eea;border-bottom:3px solid #667eea;margin-bottom:-2px;cursor:pointer'
+             : 'flex:1;padding:10px;background:none;border:none;font-size:15px;font-weight:600;color:#a0aec0;border-bottom:3px solid transparent;margin-bottom:-2px;cursor:pointer';
+  document.getElementById('authSubmitBtn').textContent = isLogin ? '登录' : '注册';
+  const hint = document.getElementById('authSwitchHint');
+  if (isLogin) {
+    hint.innerHTML = '没有账号？';
+    const a = document.createElement('a');
+    a.href = '#'; a.style.cssText = 'color:#667eea;font-weight:600';
+    a.textContent = '立即注册';
+    a.onclick = function(){ switchAuthTab('register'); return false; };
+    hint.appendChild(a);
+  } else {
+    hint.innerHTML = '已有账号？';
+    const a = document.createElement('a');
+    a.href = '#'; a.style.cssText = 'color:#667eea;font-weight:600';
+    a.textContent = '去登录';
+    a.onclick = function(){ switchAuthTab('login'); return false; };
+    hint.appendChild(a);
+  }
+  document.getElementById('authMsg').style.display = 'none';
+}
+
+async function doAuth() {
+  const email = document.getElementById('authEmail').value.trim();
+  const password = document.getElementById('authPassword').value;
+  const msgEl = document.getElementById('authMsg');
+  const btn = document.getElementById('authSubmitBtn');
+  if (!email || !password) {
+    showAuthMsg('邮箱和密码不能为空', 'error'); return;
+  }
+  btn.disabled = true; btn.textContent = '处理中...';
+  const url = _authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email, password})
+    });
+    const data = await res.json();
+    if (data.ok) {
+      _currentUser = {email: data.email};
+      renderAuthArea();
+      closeAuthModal();
+    } else {
+      showAuthMsg(data.msg || '操作失败', 'error');
+    }
+  } catch(e) {
+    showAuthMsg('网络错误', 'error');
+  }
+  btn.disabled = false; btn.textContent = _authMode === 'login' ? '登录' : '注册';
+}
+
+function showAuthMsg(msg, type) {
+  const el = document.getElementById('authMsg');
+  el.textContent = msg;
+  el.style.display = 'block';
+  el.style.background = type === 'error' ? '#fff5f5' : '#f0fff4';
+  el.style.color = type === 'error' ? '#c53030' : '#276749';
+  el.style.border = type === 'error' ? '1px solid #fed7d7' : '1px solid #9ae6b4';
+}
+
+async function doLogout() {
+  await fetch('/api/auth/logout', {method: 'POST'});
+  _currentUser = null;
+  renderAuthArea();
+}
+
+function renderAuthArea() {
+  const el = document.getElementById('authArea');
+  if (_currentUser) {
+    el.innerHTML = `
+      <span style="font-size:13px;opacity:0.85">${_currentUser.email}</span>
+      <button onclick="doLogout()" style="background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);color:white;padding:6px 14px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">退出</button>
+    `;
+  } else {
+    el.innerHTML = `
+      <span style="font-size:12px;opacity:0.7;background:rgba(255,255,255,0.15);padding:3px 8px;border-radius:10px">游客模式</span>
+      <button onclick="openAuthModal('login')" style="background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);color:white;padding:6px 14px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">登录</button>
+      <button onclick="openAuthModal('register')" style="background:white;border:none;color:#667eea;padding:6px 14px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">注册</button>
+    `;
+  }
+}
+
+function requireLogin(action) {
+  if (_currentUser) return true;
+  openAuthModal('login');
+  return false;
+}
+
 // 初始化：检查今日是否已拉取
 async function initPage() {
-  const res = await fetch('/api/fetch-state');
-  const data = await res.json();
+  const [stateRes, meRes] = await Promise.all([
+    fetch('/api/fetch-state'),
+    fetch('/api/auth/me')
+  ]);
+  const data = await stateRes.json();
+  const me = await meRes.json();
+  if (me.logged_in) _currentUser = {email: me.email};
+  renderAuthArea();
+
   const today = new Date().toISOString().slice(0, 10);
   const lastFetch = data.last_fetch_date || '';
   const badge = document.getElementById('statusBadge');
@@ -1902,6 +2081,7 @@ function switchTab(tab) {
 
 // ── 收藏功能 ──────────────────────────────────────────
 async function toggleStar(id) {
+  if (!requireLogin()) return;
   const btn = document.getElementById('star-' + id);
   const isStarred = btn.dataset.starred === '1';
   const newVal = !isStarred;
@@ -1988,6 +2168,7 @@ async function unstar(id) {
 }
 
 async function generateFromStarred() {
+  if (!requireLogin()) return;
   if (starSelected.size === 0) return;
   const btn = document.getElementById('starGenBtn');
   btn.disabled = true;
@@ -2142,6 +2323,7 @@ function clearSelection() {
 }
 
 async function generateFromSelected() {
+  if (!requireLogin()) return;
   if (selectedArticles.size === 0) return;
   const btn = document.getElementById('genBtn');
   btn.disabled = true;
@@ -2176,6 +2358,7 @@ function storeRecData(recs) {
 }
 
 async function generateFromRec(index) {
+  if (!requireLogin()) return;
   const rec = recDataStore[index];
   if (!rec) return;
   const btn = document.getElementById('recgenbtn-' + index);
@@ -2351,6 +2534,7 @@ function renderGenResult(data) {
 }
 
 async function saveDraft() {
+  if (!requireLogin()) return;
   if (!_lastGenData) return;
   const res = await fetch('/api/drafts/save', {
     method: 'POST',
@@ -2861,6 +3045,13 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
 
+        elif path == "/api/auth/me":
+            user = _get_session(self)
+            if user:
+                self.send_json({"logged_in": True, "email": user["email"]})
+            else:
+                self.send_json({"logged_in": False})
+
         elif path == "/api/digest":
             digest = get_digest_data(days=3)
             db_stats = stats(DB_PATH)
@@ -2926,8 +3117,83 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
+    def _require_login(self):
+        """返回当前用户 dict，未登录则发 401 并返回 None"""
+        user = _get_session(self)
+        if not user:
+            self.send_json({"error": "请先登录", "need_login": True}, 401)
+        return user
+
     def do_POST(self):
-        if self.path == "/api/run":
+        if self.path == "/api/auth/register":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            email = body.get("email", "").strip().lower()
+            password = body.get("password", "")
+            if not email or not password:
+                self.send_json({"ok": False, "msg": "邮箱和密码不能为空"}, 400)
+                return
+            if len(password) < 6:
+                self.send_json({"ok": False, "msg": "密码至少6位"}, 400)
+                return
+            from db import register_user
+            result = register_user(email, password, DB_PATH)
+            if result["ok"]:
+                token = _make_session(result["user"])
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Set-Cookie",
+                    f"session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000")
+                body_bytes = json.dumps({"ok": True, "email": result["user"]["email"]},
+                                        ensure_ascii=False).encode()
+                self.send_header("Content-Length", len(body_bytes))
+                self.end_headers()
+                self.wfile.write(body_bytes)
+            else:
+                self.send_json(result, 400)
+            return
+
+        elif self.path == "/api/auth/login":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            email = body.get("email", "").strip().lower()
+            password = body.get("password", "")
+            from db import login_user
+            result = login_user(email, password, DB_PATH)
+            if result["ok"]:
+                token = _make_session(result["user"])
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Set-Cookie",
+                    f"session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000")
+                body_bytes = json.dumps({"ok": True, "email": result["user"]["email"]},
+                                        ensure_ascii=False).encode()
+                self.send_header("Content-Length", len(body_bytes))
+                self.end_headers()
+                self.wfile.write(body_bytes)
+            else:
+                self.send_json(result, 401)
+            return
+
+        elif self.path == "/api/auth/logout":
+            cookie = self.headers.get("Cookie", "")
+            for part in cookie.split(";"):
+                part = part.strip()
+                if part.startswith("session="):
+                    _sessions.pop(part[len("session="):], None)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Set-Cookie",
+                "session=; Path=/; HttpOnly; Max-Age=0")
+            body_bytes = b'{"ok":true}'
+            self.send_header("Content-Length", len(body_bytes))
+            self.end_headers()
+            self.wfile.write(body_bytes)
+            return
+
+        elif self.path == "/api/run":
+            if not self._require_login():
+                return
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
             topic = body.get("topic", "")
@@ -2937,6 +3203,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"ok": True})
 
         elif self.path == "/api/generate/from-articles":
+            if not self._require_login():
+                return
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
             article_ids = body.get("article_ids", [])
@@ -2966,6 +3234,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"task_id": task_id})
 
         elif self.path == "/api/star":
+            if not self._require_login():
+                return
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
             art_id = body.get("id")
@@ -2977,6 +3247,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": "missing id"}, 400)
 
         elif self.path == "/api/drafts/save":
+            if not self._require_login():
+                return
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
             try:
@@ -2994,6 +3266,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(e)}, 500)
 
         elif self.path == "/api/generate/from-recommendation":
+            if not self._require_login():
+                return
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
             rec_data = body.get("rec", {})

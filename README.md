@@ -2,7 +2,7 @@
 
 > 参考项目：[Daily-Digest-Assistant](https://github.com/yzbcs/Daily-Digest-Assistant)
 
-自动抓取医疗AI领域顶刊论文、机构动态、商业落地资讯，经 DeepSeek 评分筛选后，通过三轮生成流程（初稿→审核→润色）产出可直接发布的微信公众号文章。支持关键词订阅，每日自动推送邮件（含小红书热门笔记）。
+自动抓取医疗AI领域顶刊论文、机构动态、商业落地资讯，经 DeepSeek 评分筛选后，通过三轮生成流程（初稿→审核→润色）产出可直接发布的微信公众号文章。支持用户注册登录，游客可浏览全部情报，注册用户可收藏、生成文章、管理草稿。
 
 ## 功能
 
@@ -11,6 +11,7 @@
 - 三轮生成：DeepSeek 并行生成3篇初稿 → GPT-4.1 审核打分 → DeepSeek 润色终稿
 - 质量门槛：最优初稿低于 7.0 分自动补生成2篇，从5篇中选最优
 - 关键词订阅：用户填写邮箱+关键词，每日自动推送匹配文章+小红书热门笔记
+- **用户系统**：邮箱注册/登录，游客可浏览所有情报，登录后解锁收藏、生成、草稿等操作功能
 - Web 界面：每日情报浏览、文章选择、一键生成、草稿管理、关键词订阅管理
 
 ## 环境要求
@@ -91,6 +92,7 @@ python3 server.py
 | `MAIL_SENDER` | 发件QQ邮箱 |
 | `MAIL_PASSWD` | QQ邮箱SMTP授权码 |
 | `XHS_COOKIE` | 小红书Cookie（登录后从F12复制） |
+| `AUTH_SALT` | （可选）用户密码哈希盐，不设则使用默认值 |
 
 ### 第五步：部署
 
@@ -104,10 +106,10 @@ python3 server.py
 
 ```
 content-pipeline/
-├── server.py              # Web 服务器 + 所有 API + 前端页面
+├── server.py              # Web 服务器 + 所有 API + 前端页面（含用户认证）
 ├── main.py                # CLI 入口
 ├── analyze.py             # DeepSeek 评分与摘要生成
-├── db.py                  # SQLite 操作（含自动迁移）
+├── db.py                  # SQLite 操作（含用户表、自动迁移）
 ├── mailer.py              # 邮件推送模块
 ├── config.yaml            # RSS 源配置
 ├── requirements.txt
@@ -125,6 +127,18 @@ content-pipeline/
 └── data/
     └── my_posts_template.md
 ```
+
+## 技术栈
+
+| 层 | 技术 |
+|----|------|
+| 后端 | Python 3.9，标准库 `http.server`（无框架） |
+| 数据库 | SQLite（5张表：articles / users / subscriptions / drafts / title_suggestions） |
+| AI | DeepSeek API（评分+生成）、GitHub Models GPT-4.1（审核） |
+| 抓取 | feedparser（RSS）、requests + BeautifulSoup（网页） |
+| 认证 | SHA-256 密码哈希，内存 session token（30天有效期 cookie） |
+| 前端 | 纯 HTML/CSS/JS，内联于 server.py |
+| 部署 | Render Web Service（免费层） |
 
 ## 已知问题 / 待修复
 
