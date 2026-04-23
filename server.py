@@ -1808,46 +1808,86 @@ HTML = """<!DOCTYPE html>
 
 <div class="page" id="page-subscribe">
   <div class="main">
-    <div style="margin-bottom:20px">
-      <div style="font-size:18px;font-weight:700;color:#2d3748">📬 关键词订阅</div>
-      <div style="font-size:13px;color:#718096;margin-top:4px">设置关键词，每日自动从抓取的文章中筛选推送到邮箱</div>
+
+    <!-- 未登录提示 -->
+    <div id="subLoginHint" style="display:none;text-align:center;padding:64px 0;color:#a0aec0">
+      <div style="font-size:40px;margin-bottom:12px">📬</div>
+      <div style="font-size:16px;font-weight:600;color:#4a5568;margin-bottom:8px">登录后设置关键词订阅</div>
+      <div style="font-size:13px;margin-bottom:24px">每日从抓取的医疗AI文章中自动筛选，推送到你的邮箱</div>
+      <button onclick="openAuthModal('login')"
+        style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;padding:10px 28px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
+        登录 / 注册
+      </button>
     </div>
 
-    <!-- 订阅表单 -->
-    <div style="background:white;border-radius:12px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:24px">
-      <div style="font-size:15px;font-weight:600;color:#2d3748;margin-bottom:16px">新增 / 修改订阅</div>
-      <div style="display:grid;gap:14px">
-        <div>
-          <label style="font-size:13px;font-weight:500;color:#4a5568;display:block;margin-bottom:6px">邮箱地址 *</label>
-          <input id="sub-email" type="email" placeholder="your@email.com"
-            style="width:100%;box-sizing:border-box;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none">
-        </div>
-        <div>
-          <label style="font-size:13px;font-weight:500;color:#4a5568;display:block;margin-bottom:6px">关键词 * <span style="font-weight:400;color:#a0aec0">（多个关键词用逗号分隔，中英文均可）</span></label>
-          <input id="sub-keywords" type="text" placeholder="心电图,ECG,AI诊断,病理切片"
-            style="width:100%;box-sizing:border-box;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none">
-        </div>
-        <div>
-          <label style="font-size:13px;font-weight:500;color:#4a5568;display:block;margin-bottom:6px">DeepSeek API Key <span style="font-weight:400;color:#a0aec0">（用于生成中文摘要，留空则只推送标题和链接）</span></label>
-          <input id="sub-apikey" type="password" placeholder="sk-..."
-            style="width:100%;box-sizing:border-box;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none">
-        </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <button onclick="doSubscribe()" style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;padding:9px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">✅ 订阅</button>
-          <button onclick="doUpdate()" style="background:#f7fafc;color:#4a5568;border:1.5px solid #e2e8f0;padding:9px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">✏️ 修改关键词</button>
-          <button onclick="doCancel()" style="background:#fff5f5;color:#e53e3e;border:1.5px solid #fed7d7;padding:9px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">🗑 退订</button>
-        </div>
-        <div id="sub-msg" style="font-size:13px;display:none;padding:8px 12px;border-radius:6px"></div>
-      </div>
-    </div>
+    <!-- 已登录内容 -->
+    <div id="subContent" style="display:none">
 
-    <!-- 当前订阅列表 -->
-    <div style="background:white;border-radius:12px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,0.08)">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-        <div style="font-size:15px;font-weight:600;color:#2d3748">当前订阅列表</div>
-        <button onclick="loadSubscriptions()" style="background:#f7fafc;color:#4a5568;border:1.5px solid #e2e8f0;padding:6px 14px;border-radius:6px;font-size:13px;cursor:pointer">🔃 刷新</button>
+      <!-- 顶部状态卡片 -->
+      <div id="subStatusCard" style="background:linear-gradient(135deg,#667eea,#764ba2);border-radius:14px;padding:24px 28px;color:white;margin-bottom:24px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+          <div>
+            <div style="font-size:13px;opacity:0.8;margin-bottom:4px">当前推送邮箱</div>
+            <div style="font-size:16px;font-weight:700" id="subEmailDisplay">—</div>
+          </div>
+          <div id="subStatusBadge"
+            style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.3);border-radius:20px;padding:5px 14px;font-size:13px;font-weight:600">
+            未订阅
+          </div>
+        </div>
+        <div style="margin-top:16px" id="subKeywordsDisplay" style="display:none">
+          <div style="font-size:12px;opacity:0.75;margin-bottom:6px">当前关键词</div>
+          <div id="subKwTags" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+        </div>
       </div>
-      <div id="sub-list" style="font-size:13px;color:#a0aec0;text-align:center;padding:24px 0">加载中...</div>
+
+      <!-- 关键词编辑区 -->
+      <div style="background:white;border-radius:12px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:20px">
+        <div style="font-size:15px;font-weight:600;color:#2d3748;margin-bottom:16px" id="subFormTitle">设置关键词</div>
+        <div style="display:grid;gap:14px">
+          <div>
+            <label style="font-size:13px;font-weight:500;color:#4a5568;display:block;margin-bottom:6px">
+              关键词
+              <span style="font-weight:400;color:#a0aec0">（逗号分隔，中英文均可，如：心电图,ECG,AI诊断）</span>
+            </label>
+            <input id="sub-keywords" type="text" placeholder="心电图,ECG,AI诊断,病理切片"
+              style="width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none"
+              onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e2e8f0'">
+            <div style="font-size:12px;color:#a0aec0;margin-top:5px">填入后点「预览匹配文章」可查看近7天匹配结果，确认后再保存</div>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+            <button onclick="subSaveKeywords()"
+              style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;padding:9px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
+              ✅ 保存并开启每日推送
+            </button>
+            <button onclick="subPreview()"
+              style="background:#ebf4ff;color:#3182ce;border:none;padding:9px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
+              🔍 预览匹配文章
+            </button>
+            <button onclick="subTestPush()" id="subTestBtn"
+              style="background:#f7fafc;color:#4a5568;border:1.5px solid #e2e8f0;padding:9px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
+              📤 立即推送一次
+            </button>
+            <button onclick="subCancel()" id="subCancelBtn" style="display:none;background:#fff5f5;color:#e53e3e;border:1.5px solid #fed7d7;padding:9px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
+              🗑 取消订阅
+            </button>
+          </div>
+          <div id="sub-msg" style="font-size:13px;display:none;padding:8px 12px;border-radius:6px"></div>
+        </div>
+      </div>
+
+      <!-- 文章预览区 -->
+      <div id="subPreviewArea" style="display:none">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div style="font-size:15px;font-weight:600;color:#2d3748">
+            匹配文章预览
+            <span id="subPreviewCount" style="font-size:13px;font-weight:400;color:#718096;margin-left:8px"></span>
+          </div>
+          <div style="font-size:12px;color:#a0aec0">近7天数据</div>
+        </div>
+        <div id="subPreviewList" style="display:grid;gap:10px"></div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -2242,7 +2282,7 @@ function switchTab(tab) {
   if (tab === 'wechat') loadWechatArticles();
   if (tab === 'starred') loadStarred();
   if (tab === 'drafts') loadDrafts();
-  if (tab === 'subscribe') loadSubscriptions();
+  if (tab === 'subscribe') initSubscribePage();
   if (tab === 'myfeeds') initMyFeeds();
 }
 
@@ -3182,83 +3222,148 @@ function getSubForm() {
   };
 }
 
-async function doSubscribe() {
-  const data = getSubForm();
-  if (!data.email || !data.keywords) { showSubMsg('邮箱和关键词不能为空', false); return; }
-  const res = await fetch('/api/subscribe', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
-  const json = await res.json();
-  showSubMsg(json.msg, json.ok);
-  if (json.ok) loadSubscriptions();
-}
+// ── 关键词订阅（登录用户专属）────────────────────────────────
 
-async function doUpdate() {
-  const data = getSubForm();
-  if (!data.email || !data.keywords) { showSubMsg('邮箱和关键词不能为空', false); return; }
-  const res = await fetch('/api/subscribe/update', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
-  const json = await res.json();
-  showSubMsg(json.msg, json.ok);
-  if (json.ok) loadSubscriptions();
-}
-
-async function doCancel() {
-  const email = document.getElementById('sub-email').value.trim();
-  if (!email) { showSubMsg('请输入要退订的邮箱', false); return; }
-  if (!confirm(`确认退订 ${email}？`)) return;
-  const res = await fetch('/api/subscribe/cancel', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email})});
-  const json = await res.json();
-  showSubMsg(json.msg, json.ok);
-  if (json.ok) loadSubscriptions();
+async function initSubscribePage() {
+  const hint = document.getElementById('subLoginHint');
+  const content = document.getElementById('subContent');
+  if (!_currentUser) {
+    hint.style.display = 'block';
+    content.style.display = 'none';
+    return;
+  }
+  hint.style.display = 'none';
+  content.style.display = 'block';
+  document.getElementById('subEmailDisplay').textContent = _currentUser.email;
+  await loadSubscriptions();
 }
 
 async function loadSubscriptions() {
-  const list = document.getElementById('sub-list');
-  list.innerHTML = '加载中...';
-  const res = await fetch('/api/subscribe/list');
-  const json = await res.json();
-  const subs = json.subscriptions || [];
-  if (subs.length === 0) {
-    list.innerHTML = '<div style="text-align:center;padding:24px;color:#a0aec0">暂无订阅</div>';
+  const res = await fetch('/api/subscribe/me');
+  const data = await res.json();
+  const badge = document.getElementById('subStatusBadge');
+  const kwDisplay = document.getElementById('subKeywordsDisplay');
+  const kwTags = document.getElementById('subKwTags');
+  const cancelBtn = document.getElementById('subCancelBtn');
+  const testBtn = document.getElementById('subTestBtn');
+  const formTitle = document.getElementById('subFormTitle');
+
+  if (data.subscribed) {
+    badge.textContent = '✅ 订阅中';
+    badge.style.background = 'rgba(72,187,120,0.25)';
+    badge.style.borderColor = 'rgba(72,187,120,0.5)';
+    kwDisplay.style.display = 'block';
+    kwTags.innerHTML = data.keywords.split(',').map(k =>
+      `<span style="background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.3);border-radius:14px;padding:3px 10px;font-size:12px">${k.trim()}</span>`
+    ).join('');
+    document.getElementById('sub-keywords').value = data.keywords;
+    formTitle.textContent = '修改关键词';
+    cancelBtn.style.display = 'inline-block';
+    testBtn.style.display = 'inline-block';
+    if (data.last_sent_at) {
+      document.getElementById('subEmailDisplay').textContent =
+        _currentUser.email + '  ·  上次推送 ' + data.last_sent_at.slice(0,10);
+    }
+  } else {
+    badge.textContent = '未订阅';
+    badge.style.background = 'rgba(255,255,255,0.15)';
+    badge.style.borderColor = 'rgba(255,255,255,0.3)';
+    kwDisplay.style.display = 'none';
+    formTitle.textContent = '设置关键词，开启每日推送';
+    cancelBtn.style.display = 'none';
+    testBtn.style.display = 'none';
+  }
+}
+
+async function subSaveKeywords() {
+  if (!requireLogin()) return;
+  const keywords = document.getElementById('sub-keywords').value.trim();
+  if (!keywords) { showSubMsg('请填写关键词', false); return; }
+  const res = await fetch('/api/subscribe/save', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({keywords})
+  });
+  const data = await res.json();
+  showSubMsg(data.msg, data.ok);
+  if (data.ok) await loadSubscriptions();
+}
+
+async function subPreview() {
+  const keywords = document.getElementById('sub-keywords').value.trim();
+  if (!keywords) { showSubMsg('请先填写关键词', false); return; }
+  const area = document.getElementById('subPreviewArea');
+  const list = document.getElementById('subPreviewList');
+  const count = document.getElementById('subPreviewCount');
+  area.style.display = 'block';
+  list.innerHTML = '<div style="text-align:center;padding:24px;color:#a0aec0;font-size:13px">正在匹配文章...</div>';
+  const res = await fetch('/api/subscribe/preview?keywords=' + encodeURIComponent(keywords));
+  const data = await res.json();
+  const articles = data.articles || [];
+  count.textContent = articles.length ? `找到 ${articles.length} 篇` : '近7天暂无匹配';
+  if (!articles.length) {
+    list.innerHTML = '<div style="background:white;border-radius:10px;padding:24px;text-align:center;color:#a0aec0;font-size:13px">近7天内没有匹配该关键词的文章<br>尝试换用英文关键词，或等待明日更新后再查看</div>';
     return;
   }
-  list.innerHTML = subs.map(s => `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid #f7fafc;gap:12px;flex-wrap:wrap">
-      <div>
-        <div style="font-weight:600;color:#2d3748;font-size:14px">${s.email}</div>
-        <div style="color:#667eea;font-size:12px;margin-top:3px">🔑 ${s.keywords}</div>
-        <div style="color:#a0aec0;font-size:11px;margin-top:2px">订阅于 ${s.created_at ? s.created_at.slice(0,10) : '-'} · 上次推送 ${s.last_sent_at ? s.last_sent_at.slice(0,10) : '未推送'}</div>
+  list.innerHTML = articles.map(a => `
+    <div style="background:white;border-radius:10px;padding:14px 18px;box-shadow:0 1px 4px rgba(0,0,0,.06);border-left:3px solid #667eea">
+      <div style="font-size:14px;font-weight:600;color:#2d3748;line-height:1.5;margin-bottom:5px">
+        ${a.url ? `<a href="${escHtml(a.url)}" target="_blank" style="color:#2d3748;text-decoration:none" onmouseover="this.style.color='#667eea'" onmouseout="this.style.color='#2d3748'">${escHtml(a.title)}</a>` : escHtml(a.title)}
       </div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <span style="background:#f0fff4;color:#276749;padding:3px 10px;border-radius:12px;font-size:12px">启用中</span>
-        <button onclick="pushNow('${s.email}', this)" style="background:#667eea;color:white;border:none;padding:5px 12px;border-radius:6px;font-size:12px;cursor:pointer">📬 立即推送</button>
+      ${a.content ? `<div style="font-size:12px;color:#718096;line-height:1.6;margin-bottom:6px">${escHtml(a.content.replace(/<[^>]+>/g,''))}...</div>` : ''}
+      <div style="font-size:11px;color:#a0aec0">
+        ${escHtml(a.source_name)} · ${a.published_at || ''} · ⭐${(a.quality_score||0).toFixed(1)}
       </div>
     </div>
   `).join('');
 }
 
-async function pushNow(email, btn) {
-  btn.disabled = true;
-  btn.textContent = '推送中...';
+async function subTestPush() {
+  if (!requireLogin()) return;
+  const btn = document.getElementById('subTestBtn');
+  btn.disabled = true; btn.textContent = '发送中...';
   try {
     const res = await fetch('/api/subscribe/push', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({email})
+      body: JSON.stringify({email: _currentUser.email})
     });
-    const json = await res.json();
-    if (json.ok) {
-      btn.textContent = '✓ 已发送';
-      btn.style.background = '#48bb78';
-      setTimeout(() => { btn.textContent = '📬 立即推送'; btn.style.background = '#667eea'; btn.disabled = false; }, 3000);
-    } else {
-      btn.textContent = json.msg || '发送失败';
-      btn.style.background = '#fc8181';
-      setTimeout(() => { btn.textContent = '📬 立即推送'; btn.style.background = '#667eea'; btn.disabled = false; }, 3000);
-    }
+    const data = await res.json();
+    showSubMsg(data.msg, data.ok);
+    btn.textContent = data.ok ? '✓ 已发送' : '发送失败';
+    btn.style.background = data.ok ? '#48bb78' : '#fc8181';
+    btn.style.color = 'white'; btn.style.border = 'none';
+    setTimeout(() => {
+      btn.textContent = '📤 立即推送一次';
+      btn.style.background = ''; btn.style.color = ''; btn.style.border = '';
+      btn.disabled = false;
+    }, 3000);
   } catch(e) {
-    btn.textContent = '网络错误';
-    btn.style.background = '#fc8181';
-    setTimeout(() => { btn.textContent = '📬 立即推送'; btn.style.background = '#667eea'; btn.disabled = false; }, 3000);
+    showSubMsg('网络错误', false);
+    btn.disabled = false; btn.textContent = '📤 立即推送一次';
   }
+}
+
+async function subCancel() {
+  if (!confirm('确认取消订阅？将不再收到每日推送邮件。')) return;
+  const res = await fetch('/api/subscribe/cancel/me', {method:'POST'});
+  const data = await res.json();
+  showSubMsg(data.msg, data.ok);
+  if (data.ok) {
+    document.getElementById('sub-keywords').value = '';
+    document.getElementById('subPreviewArea').style.display = 'none';
+    await loadSubscriptions();
+  }
+}
+
+function showSubMsg(msg, ok) {
+  const el = document.getElementById('sub-msg');
+  el.textContent = msg;
+  el.style.display = 'block';
+  el.style.background = ok ? '#f0fff4' : '#fff5f5';
+  el.style.color = ok ? '#276749' : '#c53030';
+  el.style.border = ok ? '1px solid #9ae6b4' : '1px solid #fed7d7';
+  setTimeout(() => { el.style.display = 'none'; }, 4000);
 }
 </script>
 
@@ -3435,6 +3540,32 @@ class Handler(BaseHTTPRequestHandler):
             feed_id = int(qs["feed_id"][0]) if "feed_id" in qs else None
             from db import get_user_articles
             self.send_json({"articles": get_user_articles(user["id"], feed_id, db_path=DB_PATH)})
+
+        elif path == "/api/subscribe/me":
+            user = _get_session(self)
+            if not user:
+                self.send_json({"subscribed": False}); return
+            from db import get_active_subscriptions
+            subs = get_active_subscriptions(DB_PATH)
+            sub = next((s for s in subs if s["email"] == user["email"]), None)
+            if sub:
+                self.send_json({"subscribed": True, "keywords": sub["keywords"],
+                                "last_sent_at": sub.get("last_sent_at") or ""})
+            else:
+                self.send_json({"subscribed": False})
+
+        elif path == "/api/subscribe/preview":
+            qs = parse_qs(urlparse(self.path).query)
+            keywords = qs.get("keywords", [""])[0].strip()
+            if not keywords:
+                self.send_json({"articles": []}); return
+            from mailer import match_articles
+            articles = match_articles(keywords, days=7, db_path=DB_PATH)
+            safe = [{"id": a["id"], "title": a["title"], "source_name": a["source_name"],
+                     "url": a.get("url",""), "quality_score": a.get("quality_score",0),
+                     "content": (a.get("content") or "")[:200],
+                     "published_at": (a.get("published_at") or "")[:10]} for a in articles]
+            self.send_json({"articles": safe})
 
         elif path == "/api/subscribe/list":
             from db import get_active_subscriptions
@@ -3700,6 +3831,29 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=_refresh,
                 args=(user["id"], feed_id, target["url"]), daemon=True).start()
             self.send_json({"ok": True, "msg": "正在后台刷新，约15秒后可查看新文章"})
+
+        elif self.path == "/api/subscribe/save":
+            user = self._require_login()
+            if not user: return
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            keywords = body.get("keywords", "").strip()
+            if not keywords:
+                self.send_json({"ok": False, "msg": "关键词不能为空"}, 400); return
+            from db import add_subscription, update_subscription, get_active_subscriptions
+            subs = get_active_subscriptions(DB_PATH)
+            existing = next((s for s in subs if s["email"] == user["email"]), None)
+            if existing:
+                result = update_subscription(user["email"], keywords, db_path=DB_PATH)
+            else:
+                result = add_subscription(user["email"], keywords, db_path=DB_PATH)
+            self.send_json(result)
+
+        elif self.path == "/api/subscribe/cancel/me":
+            user = self._require_login()
+            if not user: return
+            from db import cancel_subscription
+            self.send_json(cancel_subscription(user["email"], DB_PATH))
 
         elif self.path == "/api/subscribe":
             length = int(self.headers.get("Content-Length", 0))
