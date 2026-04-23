@@ -41,14 +41,52 @@ def fetch_xhs_for_keywords(keywords: str, cookie: str = "", candidate_pool: int 
 
 # ── 关键词匹配 ────────────────────────────────────────────────
 
+_ZH_EN_MAP = {
+    "诊断": ["diagnos", "detection"],
+    "影像": ["imaging", "radiology", "MRI", "CT", "X-ray"],
+    "病理": ["patholog"],
+    "心电图": ["ECG", "EKG", "electrocardiog"],
+    "超声": ["ultrasound", "echocardiog"],
+    "眼科": ["ophthalmol", "retinal", "fundus"],
+    "皮肤": ["dermatol", "skin"],
+    "肿瘤": ["tumor", "cancer", "oncol"],
+    "药物": ["drug", "pharmacol", "therapeut"],
+    "基因": ["gene", "genom", "DNA"],
+    "蛋白质": ["protein", "proteom"],
+    "手术": ["surgery", "surgical", "operat"],
+    "预测": ["predict", "prognos", "forecast"],
+    "分类": ["classif", "categor"],
+    "分割": ["segment"],
+    "检测": ["detect", "screen"],
+    "电子病历": ["EHR", "EMR", "clinical record"],
+    "大模型": ["LLM", "large language model", "GPT", "foundation model"],
+    "多模态": ["multimodal", "multi-modal"],
+    "临床": ["clinical", "clinic"],
+    "医院": ["hospital", "medical center"],
+    "患者": ["patient"],
+    "治疗": ["treatment", "therapy", "therapeut"],
+}
+
+
+def _expand_keywords(kws: list) -> list:
+    """将中文关键词扩展为英文同义词，同时保留原词"""
+    expanded = list(kws)
+    for kw in kws:
+        for zh, en_list in _ZH_EN_MAP.items():
+            if zh in kw:
+                expanded.extend(en_list)
+    return list(dict.fromkeys(expanded))  # 去重保序
+
+
 def match_articles(keywords: str, days: int = 1, db_path: str = DB_PATH) -> list:
-    """从今日新抓取的文章中匹配关键词，返回匹配列表"""
+    """从今日新抓取的文章中匹配关键词，返回匹配列表（自动扩展中文词为英文）"""
     kws = [k.strip() for k in keywords.split(",") if k.strip()]
     if not kws:
         return []
 
+    kws = _expand_keywords(kws)
+
     conn = get_conn(db_path)
-    # 构建 OR 条件
     conditions = " OR ".join(
         ["(title LIKE ? OR content LIKE ?)"] * len(kws)
     )
