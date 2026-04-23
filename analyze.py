@@ -119,7 +119,7 @@ def classify_and_digest(topic: str = None, days: int = 2,
         SELECT id, title, content, source_name, url, tags, quality_score
         FROM articles
         WHERE fetched_at >= datetime('now', ?)
-          AND quality_score >= 6.5
+          AND quality_score >= 5.5
           AND source != 'github'
         ORDER BY quality_score DESC
         LIMIT 60

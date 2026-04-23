@@ -1137,6 +1137,7 @@ def get_writing_recommendations(days: int = 3, topic: str = "") -> list:
 
 def run_pipeline(topic=""):
     """后台运行完整pipeline"""
+    import concurrent.futures
     global task_status
     task_status["running"] = True
     task_status["log"] = []
@@ -1144,34 +1145,76 @@ def run_pipeline(topic=""):
 
     env = os.environ.copy()
     env["DEEPSEEK_API_KEY"] = DEEPSEEK_API_KEY
+    python_exe = ".venv/bin/python" if os.path.exists(".venv/bin/python") else "python"
 
-    db_args = ["--db", DB_PATH]
-    steps = [
-        ("抓取文章", ["python", "main.py"] + db_args + ["fetch"]),
-        ("补充摘要", ["python", "-c",
-            f"from scrapers.enrich import enrich_articles; enrich_articles(limit=60, min_score=6.0, delay=0.8, deepseek_key='{DEEPSEEK_API_KEY}', db_path='{DB_PATH}')"]),
-        ("AI评分", ["python", "main.py"] + db_args + ["score", "--limit", "30"]),
-        ("生成摘要", ["python", "main.py"] + db_args + ["digest"] + (["--topic", topic] if topic else [])),
-    ]
-
-    for step_name, cmd in steps:
-        task_status["step"] = step_name
-        task_status["log"].append(f"▶ {step_name}...")
-        python_exe = ".venv/bin/python" if os.path.exists(".venv/bin/python") else "python"
-        result = subprocess.run(
+    def run_step(cmd, env=env):
+        return subprocess.run(
             [python_exe] + cmd[1:],
             capture_output=True, text=True, env=env, cwd=os.getcwd()
         )
-        if result.stdout:
-            task_status["log"].extend(result.stdout.strip().split("\n"))
-        if result.returncode != 0 and result.stderr:
-            task_status["log"].append(f"错误: {result.stderr[:200]}")
+
+    db_args = ["--db", DB_PATH]
+
+    # ── 第一步：并行抓取所有 RSS 源 ──────────────────────────
+    task_status["step"] = "抓取文章"
+    task_status["log"].append("▶ 并行抓取所有 RSS 源...")
+    try:
+        import yaml, feedparser as _fp
+        from scrapers.rss import fetch_rss, load_config, build_wewe_sources, fetch_github
+        from pathlib import Path
+        config = load_config("config.yaml")
+        cfg_sources = config.get("rss_sources", [])
+        from scrapers.rss import DEFAULT_SOURCES
+        rss_sources = cfg_sources if cfg_sources else DEFAULT_SOURCES
+        wewe_sources = build_wewe_sources(config)
+        all_sources = rss_sources + wewe_sources
+
+        def _fetch_one(src):
+            try:
+                n = fetch_rss(src, db_path=DB_PATH)
+                return f"  ✓ {src['name']}: +{n} 篇"
+            except Exception as e:
+                return f"  ✗ {src['name']}: {e}"
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+            futures = {ex.submit(_fetch_one, s): s for s in all_sources}
+            for f in concurrent.futures.as_completed(futures):
+                task_status["log"].append(f.result())
+
+        # GitHub 单独串行（有限速考虑）
+        task_status["log"].append("  抓取 GitHub 项目...")
+        fetch_github(db_path=DB_PATH)
+        task_status["log"].append("  ✓ GitHub 抓取完成")
+    except Exception as e:
+        task_status["log"].append(f"  抓取异常: {e}，降级到子进程模式...")
+        r = run_step(["python", "main.py"] + db_args + ["fetch"])
+        task_status["log"].extend((r.stdout or "").strip().split("\n"))
+
+    # ── 第二步：AI 评分 ──────────────────────────────────────
+    task_status["step"] = "AI评分"
+    task_status["log"].append("▶ AI评分...")
+    r = run_step(["python", "main.py"] + db_args + ["score", "--limit", "60"])
+    if r.stdout:
+        task_status["log"].extend(r.stdout.strip().split("\n"))
+    if r.returncode != 0 and r.stderr:
+        task_status["log"].append(f"评分错误: {r.stderr[:300]}")
+
+    # ── 第三步：生成今日摘要 ─────────────────────────────────
+    task_status["step"] = "生成摘要"
+    task_status["log"].append("▶ 生成今日情报摘要...")
+    digest_cmd = ["python", "main.py"] + db_args + ["digest"]
+    if topic:
+        digest_cmd += ["--topic", topic]
+    r = run_step(digest_cmd)
+    if r.stdout:
+        task_status["log"].extend(r.stdout.strip().split("\n"))
+    if r.returncode != 0 and r.stderr:
+        task_status["log"].append(f"摘要错误: {r.stderr[:300]}")
 
     task_status["running"] = False
     task_status["step"] = "完成"
     from datetime import date
     set_app_state("last_fetch_date", str(date.today()))
-    # 清除写作推荐缓存，下次请求时重新基于最新文章生成
     _recommend_cache["data"] = None
     _recommend_cache["digest_hash"] = ""
 
@@ -1240,7 +1283,7 @@ def get_digest_data(days=2):
                published_at, fetched_at
         FROM articles
         WHERE fetched_at >= datetime('now', ?)
-          AND quality_score >= 6.5
+          AND quality_score >= 5.5
           AND category != ''
         ORDER BY quality_score DESC
     """, (f'-{days} days',)).fetchall()
