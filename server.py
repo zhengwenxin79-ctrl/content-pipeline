@@ -3308,7 +3308,7 @@ async function subPreview() {
   const list = document.getElementById('subPreviewList');
   const count = document.getElementById('subPreviewCount');
   area.style.display = 'block';
-  list.innerHTML = '<div style="text-align:center;padding:24px;color:#a0aec0;font-size:13px">正在匹配文章...</div>';
+  list.innerHTML = '<div style="text-align:center;padding:24px;color:#a0aec0;font-size:13px">正在匹配并翻译文章，稍候...</div>';
   const res = await fetch('/api/subscribe/preview?keywords=' + encodeURIComponent(keywords));
   const data = await res.json();
   const articles = data.articles || [];
@@ -3319,11 +3319,12 @@ async function subPreview() {
   }
   list.innerHTML = articles.map(a => `
     <div style="background:white;border-radius:10px;padding:14px 18px;box-shadow:0 1px 4px rgba(0,0,0,.06);border-left:3px solid #667eea">
-      <div style="font-size:14px;font-weight:600;color:#2d3748;line-height:1.5;margin-bottom:5px">
-        ${a.url ? `<a href="${escHtml(a.url)}" target="_blank" style="color:#2d3748;text-decoration:none" onmouseover="this.style.color='#667eea'" onmouseout="this.style.color='#2d3748'">${escHtml(a.title)}</a>` : escHtml(a.title)}
+      ${a.title_zh ? `<div style="font-size:15px;font-weight:700;color:#2d3748;line-height:1.5;margin-bottom:3px">${escHtml(a.title_zh)}</div>` : ''}
+      <div style="font-size:12px;${a.title_zh ? 'color:#718096' : 'font-size:14px;font-weight:600;color:#2d3748'};line-height:1.4;margin-bottom:6px">
+        ${a.url ? `<a href="${escHtml(a.url)}" target="_blank" style="color:inherit;text-decoration:none;border-bottom:1px dashed #cbd5e0" onmouseover="this.style.color='#667eea'" onmouseout="this.style.color=''">${escHtml(a.title)}</a>` : escHtml(a.title)}
       </div>
-      ${a.content ? `<div style="font-size:12px;color:#718096;line-height:1.6;margin-bottom:6px">${escHtml(a.content.replace(/<[^>]+>/g,''))}...</div>` : ''}
-      <div style="font-size:11px;color:#a0aec0">
+      ${a.content ? `<div style="font-size:12px;color:#a0aec0;line-height:1.6;margin-bottom:6px">${escHtml(a.content.replace(/<[^>]+>/g,''))}...</div>` : ''}
+      <div style="font-size:11px;color:#b0bec5">
         ${escHtml(a.source_name)} · ${a.published_at || ''} · ⭐${(a.quality_score||0).toFixed(1)}
       </div>
     </div>
@@ -3573,10 +3574,30 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"articles": []}); return
             from mailer import match_articles
             articles = match_articles(keywords, days=7, db_path=DB_PATH)
-            safe = [{"id": a["id"], "title": a["title"], "source_name": a["source_name"],
+            safe = [{"id": a["id"], "title": a["title"], "title_zh": "",
+                     "source_name": a["source_name"],
                      "url": a.get("url",""), "quality_score": a.get("quality_score",0),
                      "content": (a.get("content") or "")[:200],
                      "published_at": (a.get("published_at") or "")[:10]} for a in articles]
+            # 批量翻译标题（仅英文标题）
+            to_translate = [i for i, a in enumerate(safe)
+                            if a["title"] and not any('一' <= c <= '鿿' for c in a["title"])]
+            if to_translate:
+                try:
+                    from analyze import get_client, chat
+                    client = get_client()
+                    titles_text = "\n".join(f"{i+1}. {safe[i]['title']}" for i in to_translate)
+                    prompt = (f"将以下英文标题逐条翻译成简洁的中文（保留专业术语缩写），"
+                              f"只输出JSON数组，格式 [\"译文1\",\"译文2\",...]，不要多余文字：\n{titles_text}")
+                    resp = chat(client, prompt, max_tokens=800)
+                    resp = resp.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                    import json as _json
+                    translations = _json.loads(resp)
+                    for rank, idx in enumerate(to_translate):
+                        if rank < len(translations):
+                            safe[idx]["title_zh"] = translations[rank]
+                except Exception:
+                    pass  # 翻译失败不影响主流程
             self.send_json({"articles": safe})
 
         elif path == "/api/subscribe/list":
