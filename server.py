@@ -39,6 +39,41 @@ GITHUB_MODELS_BASE_URL = "https://models.inference.ai.azure.com"
 DB_PATH = os.environ.get("DB_PATH", "corpus/corpus.db")
 XHS_COOKIE = os.environ.get("XHS_COOKIE", "")
 
+
+def fetch_user_feeds_once():
+    """抓取所有用户的自定义 RSS 源，保存新文章，然后 6 小时后再次执行"""
+    try:
+        import feedparser
+        from db import get_all_user_feeds, save_user_article, update_feed_fetched
+        feeds = get_all_user_feeds(DB_PATH)
+        for feed in feeds:
+            try:
+                parsed = feedparser.parse(feed["url"])
+                for entry in parsed.entries[:30]:
+                    title = entry.get("title", "").strip()
+                    url = entry.get("link", "").strip()
+                    content = entry.get("summary", "") or entry.get("content", [{}])[0].get("value", "")
+                    published = entry.get("published", "") or entry.get("updated", "")
+                    if title and url:
+                        save_user_article(
+                            user_id=feed["user_id"],
+                            feed_id=feed["id"],
+                            title=title,
+                            url=url,
+                            content=content[:2000] if content else None,
+                            published_at=published,
+                            db_path=DB_PATH
+                        )
+                update_feed_fetched(feed["id"], DB_PATH)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    finally:
+        t = threading.Timer(6 * 3600, fetch_user_feeds_once)
+        t.daemon = True
+        t.start()
+
 # 全局任务状态
 task_status = {"running": False, "log": [], "step": ""}
 
@@ -1561,6 +1596,7 @@ HTML = """<!DOCTYPE html>
   <div class="tab" id="tab-wechat" onclick="switchTab('wechat')">💬 公众号分析</div>
   <div class="tab" id="tab-starred" onclick="switchTab('starred')">⭐ 收藏</div>
   <div class="tab" id="tab-drafts" onclick="switchTab('drafts')">📝 草稿箱 <span id="draftBadge" style="display:none;background:#667eea;color:white;border-radius:10px;font-size:11px;padding:1px 7px;margin-left:4px">0</span></div>
+  <div class="tab" id="tab-myfeeds" onclick="switchTab('myfeeds')">📡 我的订阅</div>
   <div class="tab" id="tab-subscribe" onclick="switchTab('subscribe')">📬 关键词订阅</div>
 </div>
 
@@ -1640,6 +1676,93 @@ HTML = """<!DOCTYPE html>
 </div>
 
 <!-- 订阅Tab -->
+<div class="page" id="page-myfeeds">
+  <div class="main">
+
+    <!-- 引导说明 -->
+    <div style="background:linear-gradient(135deg,#667eea15,#764ba215);border:1px solid #667eea30;border-radius:12px;padding:20px 24px;margin-bottom:24px">
+      <div style="font-size:15px;font-weight:700;color:#2d3748;margin-bottom:10px">📡 订阅任意 RSS 源</div>
+      <div style="font-size:13px;color:#4a5568;line-height:1.8">
+        你可以把任何网站的 RSS 源添加到这里，系统每6小时自动抓取新文章。<br>
+        <strong>想订阅微信公众号？</strong> 推荐使用
+        <a href="https://werss.app" target="_blank" style="color:#667eea;font-weight:600">WeRSS.app</a>：
+        搜索公众号名称 → 复制生成的 RSS 链接 → 粘贴到下方输入框，3步完成。
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+        <span style="font-size:12px;background:white;border:1px solid #e2e8f0;border-radius:20px;padding:3px 12px;color:#4a5568">arXiv: arxiv.org/rss/cs.AI</span>
+        <span style="font-size:12px;background:white;border:1px solid #e2e8f0;border-radius:20px;padding:3px 12px;color:#4a5568">微信公众号: via WeRSS</span>
+        <span style="font-size:12px;background:white;border:1px solid #e2e8f0;border-radius:20px;padding:3px 12px;color:#4a5568">任意博客 RSS/Atom URL</span>
+      </div>
+    </div>
+
+    <!-- 添加新源 -->
+    <div style="background:white;border-radius:12px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:24px" id="myfeedsAddBox">
+      <div style="font-size:15px;font-weight:600;color:#2d3748;margin-bottom:16px">添加 RSS 源</div>
+      <div style="display:grid;gap:12px">
+        <div style="display:grid;grid-template-columns:1fr 2fr;gap:12px">
+          <div>
+            <label style="font-size:13px;font-weight:500;color:#4a5568;display:block;margin-bottom:6px">源名称 *</label>
+            <input id="feed-name" type="text" placeholder="如：STAT News"
+              style="width:100%;box-sizing:border-box;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none"
+              onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e2e8f0'">
+          </div>
+          <div>
+            <label style="font-size:13px;font-weight:500;color:#4a5568;display:block;margin-bottom:6px">RSS URL *</label>
+            <input id="feed-url" type="url" placeholder="https://..."
+              style="width:100%;box-sizing:border-box;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none"
+              onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e2e8f0'"
+              onkeydown="if(event.key==='Enter')addFeed()">
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <button onclick="addFeed()" id="addFeedBtn"
+            style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;padding:9px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
+            + 添加并立即抓取
+          </button>
+          <div id="feed-msg" style="font-size:13px;display:none;padding:6px 12px;border-radius:6px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 未登录提示 -->
+    <div id="myfeedsLoginHint" style="display:none;text-align:center;padding:48px;color:#a0aec0">
+      <div style="font-size:36px;margin-bottom:12px">🔒</div>
+      <p style="font-size:15px;margin-bottom:16px">登录后才能添加和查看你的订阅源</p>
+      <button onclick="openAuthModal('login')"
+        style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;padding:10px 28px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
+        登录 / 注册
+      </button>
+    </div>
+
+    <!-- 订阅源列表 + 文章区 -->
+    <div id="myfeedsContent" style="display:none;display:grid;grid-template-columns:240px 1fr;gap:20px;align-items:start">
+
+      <!-- 左侧：源列表 -->
+      <div style="background:white;border-radius:12px;padding:16px;box-shadow:0 1px 4px rgba(0,0,0,0.08)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div style="font-size:14px;font-weight:600;color:#2d3748">我的源</div>
+          <button onclick="loadMyFeeds()" style="background:none;border:none;color:#a0aec0;cursor:pointer;font-size:18px" title="刷新">⟳</button>
+        </div>
+        <div id="feedsList" style="display:grid;gap:6px">
+          <div style="font-size:13px;color:#a0aec0;text-align:center;padding:16px">加载中...</div>
+        </div>
+      </div>
+
+      <!-- 右侧：文章列表 -->
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div id="feedArticlesTitle" style="font-size:16px;font-weight:700;color:#2d3748">全部文章</div>
+          <button onclick="refreshCurrentFeed()" id="refreshFeedBtn" style="display:none;background:#f7fafc;color:#4a5568;border:1.5px solid #e2e8f0;padding:6px 14px;border-radius:6px;font-size:13px;cursor:pointer">🔃 立即刷新</button>
+        </div>
+        <div id="feedArticlesList" style="display:grid;gap:10px">
+          <div style="font-size:13px;color:#a0aec0;text-align:center;padding:32px">从左侧选择一个订阅源查看文章</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
 <div class="page" id="page-subscribe">
   <div class="main">
     <div style="margin-bottom:20px">
@@ -2077,6 +2200,156 @@ function switchTab(tab) {
   if (tab === 'starred') loadStarred();
   if (tab === 'drafts') loadDrafts();
   if (tab === 'subscribe') loadSubscriptions();
+  if (tab === 'myfeeds') initMyFeeds();
+}
+
+// ── 我的订阅 ──────────────────────────────────────────
+let _currentFeedId = null;
+
+function initMyFeeds() {
+  const addBox = document.getElementById('myfeedsAddBox');
+  const hint = document.getElementById('myfeedsLoginHint');
+  const content = document.getElementById('myfeedsContent');
+  if (_currentUser) {
+    addBox.style.display = 'block';
+    hint.style.display = 'none';
+    content.style.display = 'grid';
+    loadMyFeeds();
+  } else {
+    addBox.style.display = 'none';
+    hint.style.display = 'block';
+    content.style.display = 'none';
+  }
+}
+
+async function addFeed() {
+  if (!requireLogin()) return;
+  const name = document.getElementById('feed-name').value.trim();
+  const url = document.getElementById('feed-url').value.trim();
+  const btn = document.getElementById('addFeedBtn');
+  const msg = document.getElementById('feed-msg');
+  btn.disabled = true; btn.textContent = '添加中...';
+  try {
+    const res = await fetch('/api/myfeeds/add', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, url})
+    });
+    const data = await res.json();
+    msg.style.display = 'block';
+    if (data.ok) {
+      msg.textContent = '添加成功，正在后台抓取文章...';
+      msg.style.background = '#f0fff4'; msg.style.color = '#276749';
+      document.getElementById('feed-name').value = '';
+      document.getElementById('feed-url').value = '';
+      setTimeout(() => { loadMyFeeds(); loadFeedArticles(data.id); }, 3000);
+    } else {
+      msg.textContent = data.msg || '添加失败';
+      msg.style.background = '#fff5f5'; msg.style.color = '#c53030';
+    }
+  } catch(e) {
+    msg.style.display = 'block';
+    msg.textContent = '网络错误';
+    msg.style.background = '#fff5f5'; msg.style.color = '#c53030';
+  }
+  btn.disabled = false; btn.textContent = '+ 添加并立即抓取';
+}
+
+async function loadMyFeeds() {
+  const list = document.getElementById('feedsList');
+  list.innerHTML = '<div style="font-size:13px;color:#a0aec0;text-align:center;padding:16px">加载中...</div>';
+  const res = await fetch('/api/myfeeds');
+  if (res.status === 401) { initMyFeeds(); return; }
+  const data = await res.json();
+  const feeds = data.feeds || [];
+  if (!feeds.length) {
+    list.innerHTML = '<div style="font-size:13px;color:#a0aec0;text-align:center;padding:16px">还没有订阅源，在上方添加</div>';
+    return;
+  }
+  list.innerHTML = feeds.map(f => {
+    const active = _currentFeedId === f.id;
+    return `<div class="feed-item${active ? ' active' : ''}" id="feeditem-${f.id}"
+      onclick="loadFeedArticles(${f.id})"
+      style="padding:10px 12px;border-radius:8px;cursor:pointer;border:1.5px solid ${active ? '#667eea' : '#e2e8f0'};background:${active ? '#ebf4ff' : 'white'};transition:all .15s">
+      <div style="font-size:13px;font-weight:600;color:#2d3748;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(f.name)}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+        <div style="font-size:11px;color:#a0aec0">${f.last_fetched_at ? '已同步' : '待同步'}</div>
+        <button onclick="event.stopPropagation();deleteFeed(${f.id})"
+          style="background:none;border:none;color:#fc8181;cursor:pointer;font-size:12px;padding:0">删除</button>
+      </div>
+    </div>`;
+  }).join('') + `<div onclick="loadFeedArticles(null)"
+    style="padding:10px 12px;border-radius:8px;cursor:pointer;border:1.5px solid #e2e8f0;background:white;font-size:13px;font-weight:600;color:#667eea;text-align:center;margin-top:4px">
+    全部文章
+  </div>`;
+}
+
+async function loadFeedArticles(feedId) {
+  _currentFeedId = feedId;
+  // 更新选中样式
+  document.querySelectorAll('[id^="feeditem-"]').forEach(el => {
+    const id = parseInt(el.id.split('-')[1]);
+    el.style.borderColor = id === feedId ? '#667eea' : '#e2e8f0';
+    el.style.background = id === feedId ? '#ebf4ff' : 'white';
+  });
+  const title = document.getElementById('feedArticlesTitle');
+  const refreshBtn = document.getElementById('refreshFeedBtn');
+  const list = document.getElementById('feedArticlesList');
+  title.textContent = feedId ? '文章列表' : '全部文章';
+  refreshBtn.style.display = feedId ? 'block' : 'none';
+  list.innerHTML = '<div style="font-size:13px;color:#a0aec0;text-align:center;padding:32px">加载中...</div>';
+  const url = feedId ? '/api/myfeeds/articles?feed_id=' + feedId : '/api/myfeeds/articles';
+  const res = await fetch(url);
+  const data = await res.json();
+  const articles = data.articles || [];
+  if (!articles.length) {
+    list.innerHTML = '<div style="font-size:13px;color:#a0aec0;text-align:center;padding:48px"><div style="font-size:32px;margin-bottom:8px">📭</div>暂无文章，稍后自动抓取或点击「立即刷新」</div>';
+    return;
+  }
+  list.innerHTML = articles.map(a => `
+    <div style="background:white;border-radius:12px;padding:16px 20px;box-shadow:0 1px 4px rgba(0,0,0,.06);border-left:4px solid #667eea">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div>
+          <div style="font-size:14px;font-weight:600;color:#2d3748;line-height:1.5">
+            ${a.url ? `<a href="${escHtml(a.url)}" target="_blank" style="color:#2d3748;text-decoration:none" onmouseover="this.style.color='#667eea'" onmouseout="this.style.color='#2d3748'">${escHtml(a.title)}</a>` : escHtml(a.title)}
+          </div>
+          <div style="font-size:12px;color:#a0aec0;margin-top:5px">
+            <span style="background:#ebf4ff;color:#3182ce;border-radius:10px;padding:1px 8px;font-size:11px;margin-right:6px">${escHtml(a.feed_name)}</span>
+            ${a.published_at ? a.published_at.slice(0,10) : a.fetched_at.slice(0,10)}
+          </div>
+          ${a.content ? `<div style="font-size:13px;color:#4a5568;margin-top:8px;line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${escHtml(a.content.replace(/<[^>]+>/g,''))}</div>` : ''}
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function deleteFeed(feedId) {
+  if (!confirm('删除该订阅源及其所有文章？')) return;
+  await fetch('/api/myfeeds/delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id: feedId})
+  });
+  if (_currentFeedId === feedId) {
+    _currentFeedId = null;
+    document.getElementById('feedArticlesList').innerHTML = '<div style="font-size:13px;color:#a0aec0;text-align:center;padding:32px">从左侧选择一个订阅源查看文章</div>';
+    document.getElementById('refreshFeedBtn').style.display = 'none';
+  }
+  loadMyFeeds();
+}
+
+async function refreshCurrentFeed() {
+  if (!_currentFeedId) return;
+  const btn = document.getElementById('refreshFeedBtn');
+  btn.textContent = '刷新中...'; btn.disabled = true;
+  await fetch('/api/myfeeds/refresh', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id: _currentFeedId})
+  });
+  btn.textContent = '🔃 立即刷新'; btn.disabled = false;
+  setTimeout(() => loadFeedArticles(_currentFeedId), 15000);
 }
 
 // ── 收藏功能 ──────────────────────────────────────────
@@ -3061,7 +3334,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(task_status)
 
         elif path == "/api/recommend":
-            from urllib.parse import parse_qs
             qs = parse_qs(urlparse(self.path).query)
             topic = qs.get("topic", [""])[0]
             recs = get_writing_recommendations(days=3, topic=topic)
@@ -3104,6 +3376,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True})
             except ValueError:
                 self.send_json({"error": "invalid id"}, 400)
+
+        elif path == "/api/myfeeds":
+            user = _get_session(self)
+            if not user:
+                self.send_json({"error": "请先登录"}, 401); return
+            from db import get_user_feeds
+            self.send_json({"feeds": get_user_feeds(user["id"], DB_PATH)})
+
+        elif path == "/api/myfeeds/articles":
+            user = _get_session(self)
+            if not user:
+                self.send_json({"error": "请先登录"}, 401); return
+            qs = parse_qs(urlparse(self.path).query)
+            feed_id = int(qs["feed_id"][0]) if "feed_id" in qs else None
+            from db import get_user_articles
+            self.send_json({"articles": get_user_articles(user["id"], feed_id, db_path=DB_PATH)})
 
         elif path == "/api/subscribe/list":
             from db import get_active_subscriptions
@@ -3295,6 +3583,81 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=_run_rec, args=(task_id, rec_data), daemon=True).start()
             self.send_json({"task_id": task_id})
 
+        elif self.path == "/api/myfeeds/add":
+            user = self._require_login()
+            if not user: return
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            name = body.get("name", "").strip()
+            url = body.get("url", "").strip()
+            if not name or not url:
+                self.send_json({"ok": False, "msg": "名称和 URL 不能为空"}, 400); return
+            if not url.startswith("http"):
+                self.send_json({"ok": False, "msg": "请输入完整的 URL（以 http 开头）"}, 400); return
+            from db import add_user_feed
+            result = add_user_feed(user["id"], name, url, DB_PATH)
+            if result["ok"]:
+                # 立即抓取这条新源
+                def _fetch_new(uid, fid, furl):
+                    try:
+                        import feedparser
+                        from db import save_user_article, update_feed_fetched
+                        parsed = feedparser.parse(furl)
+                        for entry in parsed.entries[:30]:
+                            t = entry.get("title", "").strip()
+                            u = entry.get("link", "").strip()
+                            c = entry.get("summary", "") or ""
+                            p = entry.get("published", "") or entry.get("updated", "")
+                            if t and u:
+                                save_user_article(uid, fid, t, u, c[:2000] or None, None, p, DB_PATH)
+                        update_feed_fetched(fid, DB_PATH)
+                    except Exception:
+                        pass
+                threading.Thread(target=_fetch_new,
+                    args=(user["id"], result["id"], url), daemon=True).start()
+            self.send_json(result)
+
+        elif self.path == "/api/myfeeds/delete":
+            user = self._require_login()
+            if not user: return
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            feed_id = body.get("id")
+            if not feed_id:
+                self.send_json({"ok": False, "msg": "缺少 id"}, 400); return
+            from db import delete_user_feed
+            self.send_json(delete_user_feed(int(feed_id), user["id"], DB_PATH))
+
+        elif self.path == "/api/myfeeds/refresh":
+            user = self._require_login()
+            if not user: return
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            feed_id = int(body.get("id", 0))
+            from db import get_user_feeds
+            feeds = get_user_feeds(user["id"], DB_PATH)
+            target = next((f for f in feeds if f["id"] == feed_id), None)
+            if not target:
+                self.send_json({"ok": False, "msg": "源不存在"}, 404); return
+            def _refresh(uid, fid, furl):
+                try:
+                    import feedparser
+                    from db import save_user_article, update_feed_fetched
+                    parsed = feedparser.parse(furl)
+                    for entry in parsed.entries[:30]:
+                        t = entry.get("title", "").strip()
+                        u = entry.get("link", "").strip()
+                        c = entry.get("summary", "") or ""
+                        p = entry.get("published", "") or entry.get("updated", "")
+                        if t and u:
+                            save_user_article(uid, fid, t, u, c[:2000] or None, None, p, DB_PATH)
+                    update_feed_fetched(fid, DB_PATH)
+                except Exception:
+                    pass
+            threading.Thread(target=_refresh,
+                args=(user["id"], feed_id, target["url"]), daemon=True).start()
+            self.send_json({"ok": True, "msg": "正在后台刷新，约15秒后可查看新文章"})
+
         elif self.path == "/api/subscribe":
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -3364,6 +3727,11 @@ if __name__ == "__main__":
     # 启动时自动初始化数据库（云端首次部署无数据库时必须）
     from db import init_db
     init_db(db_path=DB_PATH)
+
+    # 启动用户 RSS 定时抓取（首次延迟60秒，之后每6小时）
+    t = threading.Timer(60, fetch_user_feeds_once)
+    t.daemon = True
+    t.start()
 
     port = int(os.environ.get("PORT", 8888))
     print(f"✓ 服务启动：http://localhost:{port}")

@@ -105,6 +105,35 @@ def init_db(db_path: str = "corpus/corpus.db"):
             created_at  TEXT DEFAULT (datetime('now'))
         );
         CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+        -- 用户自定义 RSS 源
+        CREATE TABLE IF NOT EXISTS user_feeds (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            name        TEXT NOT NULL,
+            url         TEXT NOT NULL,
+            created_at  TEXT DEFAULT (datetime('now')),
+            last_fetched_at TEXT,
+            UNIQUE(user_id, url)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_feeds_user ON user_feeds(user_id);
+
+        -- 从用户 RSS 源抓到的文章
+        CREATE TABLE IF NOT EXISTS user_articles (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            feed_id     INTEGER NOT NULL,
+            title       TEXT NOT NULL,
+            url         TEXT,
+            content     TEXT,
+            summary     TEXT,
+            published_at TEXT,
+            fetched_at  TEXT DEFAULT (datetime('now')),
+            is_read     INTEGER DEFAULT 0,
+            UNIQUE(user_id, url)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_articles_user ON user_articles(user_id);
+        CREATE INDEX IF NOT EXISTS idx_user_articles_feed ON user_articles(feed_id);
     """)
     conn.commit()
 
@@ -400,5 +429,132 @@ def login_user(email: str, password: str,
         if not row:
             return {"ok": False, "msg": "邮箱或密码错误"}
         return {"ok": True, "user": {"id": row["id"], "email": row["email"]}}
+    finally:
+        conn.close()
+
+
+# ── user_feeds ────────────────────────────────────────
+
+def add_user_feed(user_id: int, name: str, url: str,
+                  db_path: str = "corpus/corpus.db") -> dict:
+    conn = get_conn(db_path)
+    try:
+        exists = conn.execute(
+            "SELECT id FROM user_feeds WHERE user_id=? AND url=?", (user_id, url)
+        ).fetchone()
+        if exists:
+            return {"ok": False, "msg": "该 RSS 源已添加"}
+        cursor = conn.execute(
+            "INSERT INTO user_feeds (user_id, name, url) VALUES (?,?,?)",
+            (user_id, name, url)
+        )
+        conn.commit()
+        return {"ok": True, "id": cursor.lastrowid}
+    finally:
+        conn.close()
+
+
+def get_user_feeds(user_id: int, db_path: str = "corpus/corpus.db") -> list:
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM user_feeds WHERE user_id=? ORDER BY created_at DESC",
+            (user_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def delete_user_feed(feed_id: int, user_id: int,
+                     db_path: str = "corpus/corpus.db") -> dict:
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "DELETE FROM user_feeds WHERE id=? AND user_id=?", (feed_id, user_id)
+        )
+        conn.execute(
+            "DELETE FROM user_articles WHERE feed_id=? AND user_id=?", (feed_id, user_id)
+        )
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+def get_all_user_feeds(db_path: str = "corpus/corpus.db") -> list:
+    """定时任务用：获取全部用户的所有 RSS 源"""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM user_feeds").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def update_feed_fetched(feed_id: int, db_path: str = "corpus/corpus.db"):
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "UPDATE user_feeds SET last_fetched_at=datetime('now') WHERE id=?",
+            (feed_id,)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── user_articles ─────────────────────────────────────
+
+def save_user_article(user_id: int, feed_id: int, title: str,
+                      url: str, content: str = None, summary: str = None,
+                      published_at: str = None,
+                      db_path: str = "corpus/corpus.db") -> bool:
+    """保存一篇用户文章，已存在则跳过，返回是否是新文章"""
+    conn = get_conn(db_path)
+    try:
+        cursor = conn.execute("""
+            INSERT OR IGNORE INTO user_articles
+                (user_id, feed_id, title, url, content, summary, published_at)
+            VALUES (?,?,?,?,?,?,?)
+        """, (user_id, feed_id, title, url, content, summary, published_at))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_user_articles(user_id: int, feed_id: int = None, limit: int = 100,
+                      db_path: str = "corpus/corpus.db") -> list:
+    conn = get_conn(db_path)
+    try:
+        if feed_id:
+            rows = conn.execute("""
+                SELECT a.*, f.name as feed_name FROM user_articles a
+                JOIN user_feeds f ON f.id = a.feed_id
+                WHERE a.user_id=? AND a.feed_id=?
+                ORDER BY a.fetched_at DESC LIMIT ?
+            """, (user_id, feed_id, limit)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT a.*, f.name as feed_name FROM user_articles a
+                JOIN user_feeds f ON f.id = a.feed_id
+                WHERE a.user_id=?
+                ORDER BY a.fetched_at DESC LIMIT ?
+            """, (user_id, limit)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def mark_user_article_read(article_id: int, user_id: int,
+                           db_path: str = "corpus/corpus.db"):
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "UPDATE user_articles SET is_read=1 WHERE id=? AND user_id=?",
+            (article_id, user_id)
+        )
+        conn.commit()
     finally:
         conn.close()
