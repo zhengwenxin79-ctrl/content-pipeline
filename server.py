@@ -2198,6 +2198,12 @@ async function doAuth() {
       _currentUser = {email: data.email};
       renderAuthArea();
       closeAuthModal();
+      const activeTab = document.querySelector('.tab.active');
+      if (activeTab) {
+        const tab = activeTab.id.replace('tab-', '');
+        if (tab === 'subscribe') initSubscribePage();
+        if (tab === 'myfeeds') initMyFeeds();
+      }
     } else {
       showAuthMsg(data.msg || '操作失败', 'error');
     }
@@ -2220,6 +2226,12 @@ async function doLogout() {
   await fetch('/api/auth/logout', {method: 'POST'});
   _currentUser = null;
   renderAuthArea();
+  const activeTab = document.querySelector('.tab.active');
+  if (activeTab) {
+    const tab = activeTab.id.replace('tab-', '');
+    if (tab === 'subscribe') initSubscribePage();
+    if (tab === 'myfeeds') initMyFeeds();
+  }
 }
 
 function renderAuthArea() {
