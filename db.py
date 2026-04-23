@@ -7,7 +7,7 @@ import sqlite3
 import json
 import hashlib
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 
@@ -105,6 +105,16 @@ def init_db(db_path: str = "corpus/corpus.db"):
             created_at  TEXT DEFAULT (datetime('now'))
         );
         CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+        -- 持久化 session 表
+        CREATE TABLE IF NOT EXISTS sessions (
+            token       TEXT PRIMARY KEY,
+            user_id     INTEGER NOT NULL,
+            email       TEXT NOT NULL,
+            created_at  TEXT DEFAULT (datetime('now')),
+            expires_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 
         -- 用户自定义 RSS 源
         CREATE TABLE IF NOT EXISTS user_feeds (
@@ -555,6 +565,52 @@ def mark_user_article_read(article_id: int, user_id: int,
             "UPDATE user_articles SET is_read=1 WHERE id=? AND user_id=?",
             (article_id, user_id)
         )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Session 持久化 ────────────────────────────────────────────
+
+def save_session(token: str, user_id: int, email: str,
+                 days: int = 30, db_path: str = "corpus/corpus.db"):
+    expires = (datetime.utcnow() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO sessions (token, user_id, email, expires_at) VALUES (?,?,?,?)",
+            (token, user_id, email, expires)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_session(token: str, db_path: str = "corpus/corpus.db"):
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT user_id, email FROM sessions WHERE token=? AND expires_at > datetime('now')",
+            (token,)
+        ).fetchone()
+        return {"id": row["user_id"], "email": row["email"]} if row else None
+    finally:
+        conn.close()
+
+
+def delete_session(token: str, db_path: str = "corpus/corpus.db"):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM sessions WHERE token=?", (token,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def cleanup_sessions(db_path: str = "corpus/corpus.db"):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM sessions WHERE expires_at <= datetime('now')")
         conn.commit()
     finally:
         conn.close()

@@ -12,15 +12,12 @@ import subprocess
 from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
-from db import get_conn, stats
-
-# session store: token -> {id, email}
-_sessions = {}
+from db import get_conn, stats, save_session, load_session, delete_session
 
 
 def _make_session(user: dict) -> str:
     token = secrets.token_hex(32)
-    _sessions[token] = user
+    save_session(token, user["id"], user["email"], days=30, db_path=DB_PATH)
     return token
 
 
@@ -30,7 +27,7 @@ def _get_session(handler):
         part = part.strip()
         if part.startswith("session="):
             token = part[len("session="):]
-            return _sessions.get(token)
+            return load_session(token, db_path=DB_PATH)
     return None
 
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
@@ -2133,9 +2130,11 @@ async function loadRecommendations() {
 
 // ── 认证 ──────────────────────────────────────────────
 let _authMode = 'login';
+let _afterLoginCallback = null;
 
-function openAuthModal(mode) {
+function openAuthModal(mode, callback) {
   _authMode = mode || 'login';
+  _afterLoginCallback = callback || null;
   switchAuthTab(_authMode);
   document.getElementById('authEmail').value = '';
   document.getElementById('authPassword').value = '';
@@ -2198,11 +2197,17 @@ async function doAuth() {
       _currentUser = {email: data.email};
       renderAuthArea();
       closeAuthModal();
-      const activeTab = document.querySelector('.tab.active');
-      if (activeTab) {
-        const tab = activeTab.id.replace('tab-', '');
-        if (tab === 'subscribe') initSubscribePage();
-        if (tab === 'myfeeds') initMyFeeds();
+      if (_afterLoginCallback) {
+        const cb = _afterLoginCallback;
+        _afterLoginCallback = null;
+        await cb();
+      } else {
+        const activeTab = document.querySelector('.tab.active');
+        if (activeTab) {
+          const tab = activeTab.id.replace('tab-', '');
+          if (tab === 'subscribe') initSubscribePage();
+          if (tab === 'myfeeds') initMyFeeds();
+        }
       }
     } else {
       showAuthMsg(data.msg || '操作失败', 'error');
@@ -2250,9 +2255,9 @@ function renderAuthArea() {
   }
 }
 
-function requireLogin(action) {
+function requireLogin(callback) {
   if (_currentUser) return true;
-  openAuthModal('login');
+  openAuthModal('login', callback || null);
   return false;
 }
 
@@ -3288,7 +3293,7 @@ async function loadSubscriptions() {
 }
 
 async function subSaveKeywords() {
-  if (!requireLogin()) return;
+  if (!_currentUser) { requireLogin(subSaveKeywords); return; }
   const keywords = document.getElementById('sub-keywords').value.trim();
   if (!keywords) { showSubMsg('请填写关键词', false); return; }
   const res = await fetch('/api/subscribe/save', {
@@ -3675,7 +3680,7 @@ class Handler(BaseHTTPRequestHandler):
             for part in cookie.split(";"):
                 part = part.strip()
                 if part.startswith("session="):
-                    _sessions.pop(part[len("session="):], None)
+                    delete_session(part[len("session="):], db_path=DB_PATH)
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Set-Cookie",
