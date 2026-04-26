@@ -398,6 +398,32 @@ def stats(db_path: str = "corpus/corpus.db") -> dict:
         for table in ["articles", "my_posts", "title_suggestions", "drafts"]:
             row = conn.execute(f"SELECT COUNT(*) as n FROM {table}").fetchone()
             result[table] = row["n"]
+        # 今日新增
+        today = conn.execute(
+            "SELECT COUNT(*) as n FROM articles WHERE fetched_at >= datetime('now', '-1 days')"
+        ).fetchone()["n"]
+        result["today"] = today
+        # 覆盖来源数
+        sources = conn.execute(
+            "SELECT COUNT(DISTINCT source_name) as n FROM articles"
+        ).fetchone()["n"]
+        result["sources"] = sources
+        # 医疗相关（有category或来自医疗专属源）
+        medical = conn.execute(
+            """SELECT COUNT(*) as n FROM articles
+               WHERE source_name IN (
+                 'Nature Medicine','Nature Biomedical Engineering',
+                 'The Lancet Digital Health','NEJM AI','npj Digital Medicine',
+                 'JAMA Network Open','Medical Image Analysis',
+                 'IEEE Transactions on Medical Imaging',
+                 'IEEE Journal of Biomedical and Health Informatics',
+                 'STAT News','Healthcare IT News',
+                 'arXiv q-bio.QM (生物医学定量方法)',
+                 'arXiv eess.IV (医学影像/MICCAI方向)'
+               )
+               OR category != ''"""
+        ).fetchone()["n"]
+        result["medical"] = medical
         return result
     finally:
         conn.close()

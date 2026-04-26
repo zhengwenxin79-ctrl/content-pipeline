@@ -1272,8 +1272,37 @@ def translate_titles(articles: list) -> dict:
         return {}
 
 
+MEDICAL_KEYWORDS = [
+    "medical", "clinical", "hospital", "patient", "disease", "diagnosis",
+    "radiology", "patholog", "cancer", "tumor", "drug", "EHR", "EMR",
+    "health", "biomedical", "surgery", "treatment", "therapy", "imaging",
+    "genomic", "phenotype", "trial", "FDA", "physician", "nurse",
+    "X-ray", "chest", "MRI", "CT scan", "ultrasound", "retinal", "fundus",
+    "dermatol", "ophthalmol", "cardio", "cardiac", "ECG", "EEG",
+    "wound", "lesion", "biopsy", "tissue", "organ", "brain", "lung",
+    "疾病", "诊断", "医疗", "临床", "患者", "影像", "病理", "肿瘤",
+    "药物", "基因", "手术", "治疗", "医院", "健康",
+]
+
+def _is_medical(title: str, content: str, source_name: str) -> bool:
+    """判断文章是否与医疗/健康相关"""
+    # 来自医疗专属期刊/媒体的直接通过
+    medical_sources = {
+        "Nature Medicine", "Nature Biomedical Engineering", "The Lancet Digital Health",
+        "NEJM AI", "npj Digital Medicine", "JAMA Network Open",
+        "Medical Image Analysis", "IEEE Transactions on Medical Imaging",
+        "IEEE Journal of Biomedical and Health Informatics",
+        "STAT News", "Healthcare IT News", "arXiv q-bio.QM (生物医学定量方法)",
+        "arXiv eess.IV (医学影像/MICCAI方向)",
+    }
+    if source_name in medical_sources:
+        return True
+    text = (title + " " + (content or "")[:300]).lower()
+    return any(kw.lower() in text for kw in MEDICAL_KEYWORDS)
+
+
 def get_digest_data(days=2):
-    """从数据库读取分类后的文章，附带日期和英文标题翻译"""
+    """从数据库读取分类后的文章，过滤为医疗相关，附带日期和英文标题翻译"""
     conn = get_conn(DB_PATH)
     rows = conn.execute("""
         SELECT id, title, content, source, source_name, url, category, quality_score,
@@ -1285,6 +1314,9 @@ def get_digest_data(days=2):
         ORDER BY quality_score DESC
     """, (f'-{days} days',)).fetchall()
     conn.close()
+
+    # 医疗相关过滤
+    rows = [r for r in rows if _is_medical(r["title"], r["content"], r["source_name"])]
 
     result = {"顶刊论文": [], "大组动态": [], "商业落地": [], "开源项目": [], "未分类": []}
     all_articles = []
@@ -1625,26 +1657,32 @@ HTML = """<!DOCTYPE html>
 
 <div class="header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
   <div>
-    <h1>🏥 医疗AI 每日情报</h1>
-    <p>顶刊论文 · 大组动态 · 商业落地</p>
+    <h1>医疗AI 每日情报</h1>
+    <p>每天追踪顶刊、arXiv 与行业动态，为科研与产业决策服务</p>
   </div>
-  <div id="authArea" style="display:flex;align-items:center;gap:10px;flex-shrink:0"></div>
+  <div style="display:flex;align-items:center;gap:12px;flex-shrink:0">
+    <a href="/studio" style="font-size:12px;color:rgba(255,255,255,0.7);text-decoration:none;border:1px solid rgba(255,255,255,0.3);padding:5px 12px;border-radius:6px" title="内容创作工具">✍️ 创作工具</a>
+    <div id="authArea" style="display:flex;align-items:center;gap:10px"></div>
+  </div>
 </div>
 
 <div class="tabs">
-  <div class="tab active" id="tab-digest" onclick="switchTab('digest')">📊 每日情报</div>
-  <div class="tab" id="tab-wechat" onclick="switchTab('wechat')">💬 公众号分析</div>
+  <div class="tab active" id="tab-digest" onclick="switchTab('digest')">📊 今日情报</div>
   <div class="tab" id="tab-starred" onclick="switchTab('starred')">⭐ 收藏</div>
-  <div class="tab" id="tab-drafts" onclick="switchTab('drafts')">📝 草稿箱 <span id="draftBadge" style="display:none;background:#667eea;color:white;border-radius:10px;font-size:11px;padding:1px 7px;margin-left:4px">0</span></div>
-  <div class="tab" id="tab-myfeeds" onclick="switchTab('myfeeds')">📡 我的订阅</div>
-  <div class="tab" id="tab-subscribe" onclick="switchTab('subscribe')">📬 关键词订阅</div>
+  <div class="tab" id="tab-myfeeds" onclick="switchTab('myfeeds')">📡 自定义订阅</div>
+  <div class="tab" id="tab-subscribe" onclick="switchTab('subscribe')">📬 邮件推送</div>
 </div>
 
 <div class="toolbar" id="toolbar-digest">
-  <input type="text" id="topicInput" placeholder="今日关注方向（可选，如：AI辅助诊断）">
-  <button class="btn btn-primary" onclick="runPipeline()">🔄 一键更新情报</button>
-  <button class="btn btn-secondary" onclick="toggleLog()">📋 查看日志</button>
-  <span id="statusBadge" class="status-badge">就绪</span>
+  <div style="flex:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <span id="statusBadge" class="status-badge">就绪</span>
+    <span id="lastUpdateLabel" style="font-size:12px;color:#a0aec0"></span>
+  </div>
+  <div id="adminTools" style="display:none;align-items:center;gap:8px">
+    <input type="text" id="topicInput" placeholder="关注方向（可选）" style="width:180px">
+    <button class="btn btn-primary" onclick="runPipeline()">🔄 更新情报</button>
+    <button class="btn btn-secondary" onclick="toggleLog()">📋 日志</button>
+  </div>
 </div>
 
 <div class="page active" id="page-digest">
@@ -1838,20 +1876,29 @@ HTML = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- 关键词编辑区 -->
+      <!-- 领域标签选择区 -->
       <div style="background:white;border-radius:12px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:20px">
-        <div style="font-size:15px;font-weight:600;color:#2d3748;margin-bottom:16px" id="subFormTitle">设置关键词</div>
-        <div style="display:grid;gap:14px">
-          <div>
-            <label style="font-size:13px;font-weight:500;color:#4a5568;display:block;margin-bottom:6px">
-              关键词
-              <span style="font-weight:400;color:#a0aec0">（逗号分隔，中英文均可，如：心电图,ECG,AI诊断）</span>
-            </label>
-            <input id="sub-keywords" type="text" placeholder="心电图,ECG,AI诊断,病理切片"
-              style="width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none"
-              onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e2e8f0'">
-            <div style="font-size:12px;color:#a0aec0;margin-top:5px">填入后点「预览匹配文章」可查看近7天匹配结果，确认后再保存</div>
+        <div style="font-size:15px;font-weight:600;color:#2d3748;margin-bottom:6px" id="subFormTitle">选择推送领域</div>
+        <div style="font-size:13px;color:#718096;margin-bottom:16px">勾选你关注的方向，系统每日自动匹配相关文章推送到你的邮箱</div>
+        <div style="display:grid;gap:16px">
+          <!-- 标签选择 -->
+          <div id="subTagArea">
+            <div style="font-size:12px;font-weight:600;color:#a0aec0;letter-spacing:.06em;margin-bottom:10px">选择领域（可多选）</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px" id="subTagList"></div>
           </div>
+          <!-- 高级：自定义关键词 -->
+          <details style="margin-top:4px">
+            <summary style="font-size:13px;color:#667eea;cursor:pointer;font-weight:500">＋ 高级：自定义关键词</summary>
+            <div style="margin-top:10px">
+              <label style="font-size:13px;font-weight:500;color:#4a5568;display:block;margin-bottom:6px">
+                额外关键词
+                <span style="font-weight:400;color:#a0aec0">（逗号分隔，中英文均可）</span>
+              </label>
+              <input id="sub-keywords" type="text" placeholder="如：心电图,ECG,AI诊断"
+                style="width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none"
+                onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e2e8f0'">
+            </div>
+          </details>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
             <button onclick="subSaveKeywords()"
               style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;padding:9px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
@@ -1953,9 +2000,9 @@ async function loadData() {
 
 function renderStats(s) {
   document.getElementById('statsRow').innerHTML = `
-    <div class="stat-card"><div class="num">${s.articles}</div><div class="label">外部文章总量</div></div>
-    <div class="stat-card"><div class="num">${s.my_posts}</div><div class="label">历史文章种子</div></div>
-    <div class="stat-card"><div class="num">${s.title_suggestions}</div><div class="label">标题推荐记录</div></div>
+    <div class="stat-card"><div class="num">${s.today || 0}</div><div class="label">今日新增</div></div>
+    <div class="stat-card"><div class="num">${s.medical || s.articles}</div><div class="label">医疗相关文章</div></div>
+    <div class="stat-card"><div class="num">${s.sources || '—'}</div><div class="label">覆盖来源</div></div>
   `;
 }
 
@@ -2275,30 +2322,37 @@ async function initPage() {
   const today = new Date().toISOString().slice(0, 10);
   const lastFetch = data.last_fetch_date || '';
   const badge = document.getElementById('statusBadge');
+  const label = document.getElementById('lastUpdateLabel');
   if (lastFetch === today) {
-    badge.textContent = '今日已更新 ' + lastFetch;
+    badge.textContent = '今日已更新';
     badge.className = 'status-badge';
+    if (label) label.textContent = '更新于 ' + lastFetch;
   } else {
-    badge.textContent = lastFetch ? '上次更新：' + lastFetch : '未更新';
+    badge.textContent = lastFetch ? '上次：' + lastFetch : '待更新';
     badge.className = 'status-badge running';
+  }
+
+  // 管理员工具只对指定邮箱显示
+  const ADMIN_EMAILS = ['2471149840@qq.com', 'zhengwenxin79@gmail.com'];
+  if (me.logged_in && ADMIN_EMAILS.includes(me.email)) {
+    const adminTools = document.getElementById('adminTools');
+    if (adminTools) adminTools.style.display = 'flex';
   }
 }
 
 initPage();
 loadData();
-loadRecommendations();
-loadDraftBadge();
 
 // ── Tab 切换 ──────────────────────────────────────────
 function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('tab-' + tab).classList.add('active');
-  document.getElementById('page-' + tab).classList.add('active');
+  const tabEl = document.getElementById('tab-' + tab);
+  const pageEl = document.getElementById('page-' + tab);
+  if (tabEl) tabEl.classList.add('active');
+  if (pageEl) pageEl.classList.add('active');
   document.getElementById('toolbar-digest').style.display = tab === 'digest' ? 'flex' : 'none';
-  if (tab === 'wechat') loadWechatArticles();
   if (tab === 'starred') loadStarred();
-  if (tab === 'drafts') loadDrafts();
   if (tab === 'subscribe') initSubscribePage();
   if (tab === 'myfeeds') initMyFeeds();
 }
@@ -3241,6 +3295,60 @@ function getSubForm() {
 
 // ── 关键词订阅（登录用户专属）────────────────────────────────
 
+// 领域标签配置：每个标签对应一组中英文关键词
+const DOMAIN_TAGS = [
+  { label: '医学影像 AI',  keywords: 'radiology,imaging,MRI,CT,X-ray,ultrasound,影像,放射' },
+  { label: '病理 AI',      keywords: 'patholog,histolog,slide,WSI,病理' },
+  { label: '临床 NLP / LLM', keywords: 'EHR,EMR,clinical NLP,large language model,LLM,临床文本,电子病历' },
+  { label: '药物发现',     keywords: 'drug discovery,molecular,protein,drug design,药物,蛋白质' },
+  { label: '手术机器人',   keywords: 'surgical robot,robotic surgery,laparoscopic,手术机器人' },
+  { label: '基因组学',     keywords: 'genomic,genome,DNA,variant,基因,变异' },
+  { label: '可穿戴 & CGM', keywords: 'wearable,CGM,glucose,ECG,EEG,biosensor,可穿戴,血糖' },
+  { label: '政策 & 监管',  keywords: 'FDA,CE mark,regulation,approval,NMPA,监管,政策,审批' },
+  { label: '融资 & 产业',  keywords: 'funding,investment,startup,acquisition,融资,投资,并购' },
+  { label: '临床试验',     keywords: 'clinical trial,RCT,cohort,prospective,临床试验,队列' },
+];
+
+let _selectedTags = new Set();
+
+function renderSubTags(currentKeywords) {
+  const container = document.getElementById('subTagList');
+  if (!container) return;
+  // 从已有关键词里反推已选标签
+  _selectedTags.clear();
+  if (currentKeywords) {
+    DOMAIN_TAGS.forEach(t => {
+      const kwds = t.keywords.split(',');
+      if (kwds.some(k => currentKeywords.toLowerCase().includes(k.toLowerCase()))) {
+        _selectedTags.add(t.label);
+      }
+    });
+  }
+  container.innerHTML = DOMAIN_TAGS.map(t => {
+    const on = _selectedTags.has(t.label);
+    return `<button onclick="toggleSubTag('${t.label}')" id="subtag-${t.label.replace(/[^a-zA-Z0-9]/g,'_')}"
+      style="padding:7px 14px;border-radius:20px;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;
+             border:1.5px solid ${on ? '#667eea' : '#e2e8f0'};
+             background:${on ? '#ebf4ff' : 'white'};
+             color:${on ? '#667eea' : '#4a5568'}"
+    >${t.label}</button>`;
+  }).join('');
+}
+
+function toggleSubTag(label) {
+  if (_selectedTags.has(label)) _selectedTags.delete(label);
+  else _selectedTags.add(label);
+  // 合并已选标签的关键词 + 用户自定义
+  const tagKws = DOMAIN_TAGS
+    .filter(t => _selectedTags.has(t.label))
+    .flatMap(t => t.keywords.split(','));
+  const customKws = (document.getElementById('sub-keywords').value || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const merged = [...new Set([...tagKws, ...customKws])].join(',');
+  document.getElementById('sub-keywords').value = merged;
+  renderSubTags(merged);
+}
+
 async function initSubscribePage() {
   const hint = document.getElementById('subLoginHint');
   const content = document.getElementById('subContent');
@@ -3266,29 +3374,31 @@ async function loadSubscriptions() {
   const formTitle = document.getElementById('subFormTitle');
 
   if (data.subscribed) {
-    badge.textContent = '✅ 订阅中';
+    badge.textContent = '✅ 推送中';
     badge.style.background = 'rgba(72,187,120,0.25)';
     badge.style.borderColor = 'rgba(72,187,120,0.5)';
     kwDisplay.style.display = 'block';
-    kwTags.innerHTML = data.keywords.split(',').map(k =>
+    kwTags.innerHTML = data.keywords.split(',').filter(k=>k.trim()).slice(0,6).map(k =>
       `<span style="background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.3);border-radius:14px;padding:3px 10px;font-size:12px">${k.trim()}</span>`
-    ).join('');
+    ).join('') + (data.keywords.split(',').length > 6 ? `<span style="font-size:12px;opacity:.6"> +${data.keywords.split(',').length-6} 个</span>` : '');
     document.getElementById('sub-keywords').value = data.keywords;
-    formTitle.textContent = '修改关键词';
+    formTitle.textContent = '修改推送领域';
     cancelBtn.style.display = 'inline-block';
     testBtn.style.display = 'inline-block';
     if (data.last_sent_at) {
       document.getElementById('subEmailDisplay').textContent =
         _currentUser.email + '  ·  上次推送 ' + data.last_sent_at.slice(0,10);
     }
+    renderSubTags(data.keywords);
   } else {
     badge.textContent = '未订阅';
     badge.style.background = 'rgba(255,255,255,0.15)';
     badge.style.borderColor = 'rgba(255,255,255,0.3)';
     kwDisplay.style.display = 'none';
-    formTitle.textContent = '设置关键词，开启每日推送';
+    formTitle.textContent = '选择推送领域，开启每日推送';
     cancelBtn.style.display = 'none';
     testBtn.style.display = 'none';
+    renderSubTags('');
   }
 }
 
@@ -3323,7 +3433,8 @@ function _renderPreviewCards(articles) {
 
 async function subPreview() {
   const keywords = document.getElementById('sub-keywords').value.trim();
-  if (!keywords) { showSubMsg('请先填写关键词', false); return; }
+  if (!keywords && _selectedTags.size === 0) { showSubMsg('请先选择推送领域或填写关键词', false); return; }
+  if (!keywords) { showSubMsg('请先点击领域标签后再预览', false); return; }
   const area = document.getElementById('subPreviewArea');
   const list = document.getElementById('subPreviewList');
   const count = document.getElementById('subPreviewCount');
@@ -3500,6 +3611,78 @@ function setLayoutMode(el, v) {
 </body>
 </html>"""
 
+STUDIO_HTML = """<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>创作工具 · 医疗AI</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+         background: #f0f4f8; color: #1a202c; min-height: 100vh; }
+  .header { background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+            color: white; padding: 20px 32px;
+            display: flex; align-items: center; justify-content: space-between; }
+  .header h1 { font-size: 20px; font-weight: 700; }
+  .header p { font-size: 13px; opacity: 0.8; margin-top: 4px; }
+  .back-link { font-size: 13px; color: rgba(255,255,255,0.8); text-decoration: none;
+               border: 1px solid rgba(255,255,255,0.3); padding: 5px 14px;
+               border-radius: 6px; }
+  .back-link:hover { background: rgba(255,255,255,0.15); }
+  .main { max-width: 900px; margin: 32px auto; padding: 0 24px; }
+  .notice { background: #fffbeb; border: 1px solid #f6e05e; border-radius: 10px;
+            padding: 14px 18px; font-size: 13px; color: #744210; margin-bottom: 24px; }
+  .card { background: white; border-radius: 12px; padding: 24px;
+          box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 20px; }
+  .card-title { font-size: 16px; font-weight: 700; color: #2d3748; margin-bottom: 8px; }
+  .card-desc { font-size: 13px; color: #718096; margin-bottom: 16px; line-height: 1.6; }
+  .btn { display: inline-block; padding: 9px 20px; border-radius: 8px; border: none;
+         cursor: pointer; font-size: 14px; font-weight: 600; text-decoration: none;
+         background: linear-gradient(135deg,#667eea,#764ba2); color: white; }
+  .btn:hover { opacity: .88; }
+  .login-hint { text-align: center; padding: 48px 0; color: #a0aec0; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <h1>✍️ 内容创作工具</h1>
+    <p>公众号文章生成 · 写作推荐 · 草稿管理</p>
+  </div>
+  <a href="/" class="back-link">← 返回情报站</a>
+</div>
+<div class="main">
+  <div class="notice">
+    💡 这里是内容创作工具区，供公众号作者使用。普通用户请前往
+    <a href="/" style="color:#b7791f;font-weight:600">情报站首页</a> 查看每日情报。
+  </div>
+  <div id="studioLoginHint" class="login-hint" style="display:none">
+    <div style="font-size:36px;margin-bottom:12px">🔒</div>
+    <p style="font-size:15px;margin-bottom:16px;color:#4a5568">登录后使用创作工具</p>
+    <button onclick="location.href='/'" class="btn">返回首页登录</button>
+  </div>
+  <div id="studioContent">
+    <div class="card">
+      <div class="card-title">📄 公众号文章生成</div>
+      <div class="card-desc">从情报站选取 2-5 篇相关文章，经三轮 AI 自动审核生成完整文章。请先在情报站首页选文章，再回到这里生成。</div>
+      <a href="/" class="btn">→ 去情报站选文章</a>
+    </div>
+    <div class="card">
+      <div class="card-title">💬 公众号文章分析</div>
+      <div class="card-desc">上传或粘贴高阅读量公众号文章，AI 深度分析痛点踩中逻辑、标题技巧和结构亮点。</div>
+      <button class="btn" onclick="location.href='/?tab=wechat'">→ 进入分析</button>
+    </div>
+    <div class="card">
+      <div class="card-title">📝 草稿箱</div>
+      <div class="card-desc">查看和管理所有已生成的文章草稿，支持对比、复制和排版。</div>
+      <button class="btn" onclick="location.href='/?tab=drafts'">→ 打开草稿箱</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>"""
+
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
@@ -3518,6 +3701,14 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/" or path == "/index.html":
             body = HTML.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", len(body))
+            self.end_headers()
+            self.wfile.write(body)
+
+        elif path == "/studio":
+            body = STUDIO_HTML.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", len(body))
