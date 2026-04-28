@@ -1678,10 +1678,31 @@ HTML = """<!DOCTYPE html>
     <span id="statusBadge" class="status-badge">就绪</span>
     <span id="lastUpdateLabel" style="font-size:12px;color:#a0aec0"></span>
   </div>
-  <div id="adminTools" style="display:none;align-items:center;gap:8px">
+  <div id="adminTools" style="display:none;align-items:center;gap:8px;flex-wrap:wrap">
     <input type="text" id="topicInput" placeholder="关注方向（可选）" style="width:180px">
     <button class="btn btn-primary" onclick="runPipeline()">🔄 更新情报</button>
     <button class="btn btn-secondary" onclick="toggleLog()">📋 日志</button>
+    <button class="btn btn-secondary" onclick="showInviteModal()" style="background:#48bb78">🔗 邀请链接</button>
+  </div>
+
+  <!-- 邀请链接弹窗 -->
+  <div id="inviteModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:1000;align-items:center;justify-content:center">
+    <div style="background:white;border-radius:14px;padding:28px;width:440px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+      <div style="font-size:17px;font-weight:700;color:#2d3748;margin-bottom:16px">🔗 生成邀请链接</div>
+      <div style="font-size:13px;color:#718096;margin-bottom:12px">选择预置领域，访客点链接后会自动选中这些标签</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px" id="inviteTagList"></div>
+      <div style="display:flex;gap:10px;margin-top:4px">
+        <button onclick="genInviteLink()" style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;padding:9px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;flex:1">生成链接</button>
+        <button onclick="document.getElementById('inviteModal').style.display='none'" style="background:#edf2f7;border:none;padding:9px 16px;border-radius:8px;font-size:14px;cursor:pointer">取消</button>
+      </div>
+      <div id="inviteResult" style="margin-top:14px;display:none">
+        <div style="font-size:12px;color:#718096;margin-bottom:6px">链接已生成，点击复制：</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="inviteLinkInput" readonly style="flex:1;padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px;background:#f7fafc">
+          <button onclick="copyInviteLink()" style="background:#667eea;color:white;border:none;padding:8px 14px;border-radius:7px;font-size:13px;cursor:pointer">复制</button>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -2338,10 +2359,88 @@ async function initPage() {
     const adminTools = document.getElementById('adminTools');
     if (adminTools) adminTools.style.display = 'flex';
   }
+
+  // 邀请链接处理：读取 ?invite=xxx，跳转订阅页并预选标签
+  const inviteToken = new URLSearchParams(location.search).get('invite');
+  if (inviteToken) {
+    const res = await fetch('/api/invite/info?token=' + encodeURIComponent(inviteToken));
+    const data = await res.json();
+    if (data.ok) {
+      // 清除 URL 参数，避免刷新重复触发
+      history.replaceState({}, '', '/');
+      switchTab('subscribe');
+      // 等待订阅页初始化完成后预选标签
+      await initSubscribePage();
+      if (data.domain_tags) {
+        renderSubTags(data.domain_tags);
+        // 同步到关键词输入框
+        const tagKws = DOMAIN_TAGS
+          .filter(t => _selectedTags.has(t.label))
+          .flatMap(t => t.keywords.split(','));
+        document.getElementById('sub-keywords').value = [...new Set(tagKws)].join(',');
+      }
+      // 未登录时滚动到顶部，让用户看到登录提示
+      if (!me.logged_in) window.scrollTo(0, 0);
+    }
+  }
 }
 
 initPage();
 loadData();
+
+// ── 邀请链接管理 ───────────────────────────────────────
+let _inviteSelectedTags = new Set();
+
+function showInviteModal() {
+  const modal = document.getElementById('inviteModal');
+  const tagList = document.getElementById('inviteTagList');
+  _inviteSelectedTags.clear();
+  document.getElementById('inviteResult').style.display = 'none';
+  tagList.innerHTML = DOMAIN_TAGS.map(t =>
+    `<button onclick="toggleInviteTag('${t.label}')" id="invitetag-${t.label.replace(/[^a-zA-Z0-9]/g,'_')}"
+      style="padding:6px 13px;border-radius:18px;font-size:13px;font-weight:500;cursor:pointer;
+             border:1.5px solid #e2e8f0;background:white;color:#4a5568">${t.label}</button>`
+  ).join('');
+  modal.style.display = 'flex';
+}
+
+function toggleInviteTag(label) {
+  const id = 'invitetag-' + label.replace(/[^a-zA-Z0-9]/g,'_');
+  const btn = document.getElementById(id);
+  if (_inviteSelectedTags.has(label)) {
+    _inviteSelectedTags.delete(label);
+    btn.style.background = 'white'; btn.style.color = '#4a5568'; btn.style.borderColor = '#e2e8f0';
+  } else {
+    _inviteSelectedTags.add(label);
+    btn.style.background = '#ebf4ff'; btn.style.color = '#667eea'; btn.style.borderColor = '#667eea';
+  }
+}
+
+async function genInviteLink() {
+  const tagKws = DOMAIN_TAGS
+    .filter(t => _inviteSelectedTags.has(t.label))
+    .flatMap(t => t.keywords.split(','));
+  const domain_tags = [...new Set(tagKws)].join(',');
+  const res = await fetch('/api/invite/create', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ domain_tags })
+  });
+  const data = await res.json();
+  if (data.ok) {
+    const link = location.origin + '/?invite=' + data.token;
+    document.getElementById('inviteLinkInput').value = link;
+    document.getElementById('inviteResult').style.display = 'block';
+  }
+}
+
+function copyInviteLink() {
+  const input = document.getElementById('inviteLinkInput');
+  navigator.clipboard.writeText(input.value).then(() => {
+    const btn = input.nextElementSibling;
+    btn.textContent = '已复制 ✓'; btn.style.background = '#48bb78';
+    setTimeout(() => { btn.textContent = '复制'; btn.style.background = '#667eea'; }, 2000);
+  });
+}
 
 // ── Tab 切换 ──────────────────────────────────────────
 function switchTab(tab) {
@@ -4183,6 +4282,48 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(result)
             except Exception as e:
                 self.send_json({"ok": False, "msg": str(e)})
+
+        elif self.path == "/api/invite/create":
+            user = self._require_login()
+            if not user:
+                return
+            ADMIN_EMAILS = ['2471149840@qq.com', 'zhengwenxin79@gmail.com']
+            if user["email"] not in ADMIN_EMAILS:
+                self.send_json({"ok": False, "msg": "无权限"}, 403)
+                return
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            domain_tags = body.get("domain_tags", "")
+            from db import create_invite_token
+            token = create_invite_token(domain_tags, user["email"], DB_PATH)
+            self.send_json({"ok": True, "token": token})
+
+        elif path == "/api/invite/info":
+            from urllib.parse import parse_qs, urlparse
+            qs = parse_qs(urlparse(self.path).query)
+            token = qs.get("token", [""])[0]
+            if not token:
+                self.send_json({"ok": False}, 400)
+                return
+            from db import get_invite_token, use_invite_token
+            info = get_invite_token(token, DB_PATH)
+            if not info:
+                self.send_json({"ok": False, "msg": "邀请链接无效"}, 404)
+                return
+            use_invite_token(token, DB_PATH)
+            self.send_json({"ok": True, "domain_tags": info["domain_tags"]})
+
+        elif self.path == "/api/invite/list":
+            user = self._require_login()
+            if not user:
+                return
+            ADMIN_EMAILS = ['2471149840@qq.com', 'zhengwenxin79@gmail.com']
+            if user["email"] not in ADMIN_EMAILS:
+                self.send_json({"ok": False, "msg": "无权限"}, 403)
+                return
+            from db import list_invite_tokens
+            tokens = list_invite_tokens(user["email"], DB_PATH)
+            self.send_json({"ok": True, "tokens": tokens})
 
         else:
             self.send_response(404)

@@ -161,6 +161,13 @@ def init_db(db_path: str = "corpus/corpus.db"):
             key   TEXT PRIMARY KEY,
             value TEXT
         )""",
+        """CREATE TABLE IF NOT EXISTS invite_tokens (
+            token       TEXT PRIMARY KEY,
+            domain_tags TEXT DEFAULT '',
+            created_by  TEXT NOT NULL,
+            created_at  TEXT DEFAULT (datetime('now')),
+            used_count  INTEGER DEFAULT 0
+        )""",
     ]
     for sql in migrations:
         try:
@@ -638,5 +645,59 @@ def cleanup_sessions(db_path: str = "corpus/corpus.db"):
     try:
         conn.execute("DELETE FROM sessions WHERE expires_at <= datetime('now')")
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ── 邀请链接 ──────────────────────────────────────────────────
+
+def create_invite_token(domain_tags: str, created_by: str,
+                        db_path: str = "corpus/corpus.db") -> str:
+    import secrets
+    token = secrets.token_urlsafe(8)
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO invite_tokens (token, domain_tags, created_by) VALUES (?,?,?)",
+            (token, domain_tags, created_by)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return token
+
+
+def get_invite_token(token: str, db_path: str = "corpus/corpus.db"):
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT token, domain_tags, used_count FROM invite_tokens WHERE token=?",
+            (token,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def use_invite_token(token: str, db_path: str = "corpus/corpus.db"):
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "UPDATE invite_tokens SET used_count = used_count + 1 WHERE token=?",
+            (token,)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_invite_tokens(created_by: str, db_path: str = "corpus/corpus.db") -> list:
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT token, domain_tags, used_count, created_at FROM invite_tokens WHERE created_by=? ORDER BY created_at DESC",
+            (created_by,)
+        ).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()

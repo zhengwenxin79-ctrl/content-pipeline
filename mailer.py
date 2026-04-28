@@ -35,14 +35,28 @@ DB_PATH = os.environ.get("DB_PATH", "corpus/corpus.db")
 
 # ── 小红书抓取 ────────────────────────────────────────────────
 
+def _build_xhs_queries(keywords: str) -> list:
+    """把用户关键词转成医疗AI语境的小红书搜索词"""
+    raw = [k.strip() for k in keywords.split(",") if k.strip()]
+    queries = []
+    for kw in raw[:3]:  # 最多取前3个关键词，避免请求过多
+        kw_lower = kw.lower()
+        if "ai" in kw_lower or "医疗" in kw_lower or "临床" in kw_lower:
+            queries.append(kw)
+        else:
+            queries.append(f"AI{kw}")
+    queries.append("医疗AI")  # 兜底：始终搜一条医疗AI综合词
+    return list(dict.fromkeys(queries))  # 去重保序
+
+
 def fetch_xhs_for_keywords(keywords: str, cookie: str = "", candidate_pool: int = 5) -> list:
-    """按关键词抓取小红书热门笔记"""
+    """按关键词抓取小红书热门笔记（自动加医疗AI语境前缀）"""
     if not cookie:
         return []
     try:
         from scrapers.xhs_fetcher import fetch_xhs_notes
-        kws = [k.strip() for k in keywords.split(",") if k.strip()]
-        results = fetch_xhs_notes(kws, candidate_pool=candidate_pool, cookies_str=cookie)
+        queries = _build_xhs_queries(keywords)
+        results = fetch_xhs_notes(queries, candidate_pool=candidate_pool, cookies_str=cookie)
         return results
     except Exception as e:
         print(f"⚠ 小红书抓取失败: {e}")
