@@ -3721,6 +3721,284 @@ function setLayoutMode(el, v) {
 </body>
 </html>"""
 
+SURVEY_HTML = """<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问卷调查 · 医疗AI每日情报</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+       background: #f0f4f8; color: #1a202c; min-height: 100vh; }
+.header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: white; padding: 24px 32px; text-align: center; }
+.header h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+.header p { font-size: 14px; opacity: 0.85; line-height: 1.6; }
+.main { max-width: 680px; margin: 32px auto; padding: 0 20px 60px; }
+.progress-bar { background: #e2e8f0; border-radius: 6px; height: 6px; margin-bottom: 28px; }
+.progress-fill { background: linear-gradient(90deg, #667eea, #764ba2); height: 6px; border-radius: 6px; transition: width .4s; }
+.progress-text { font-size: 12px; color: #a0aec0; margin-top: 6px; }
+.card { background: white; border-radius: 14px; padding: 28px;
+        box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 20px; }
+.q-num { font-size: 12px; font-weight: 700; color: #667eea; letter-spacing: .08em; margin-bottom: 8px; }
+.q-text { font-size: 16px; font-weight: 600; color: #2d3748; line-height: 1.55; margin-bottom: 6px; }
+.q-hint { font-size: 13px; color: #718096; margin-bottom: 18px; }
+.options { display: flex; flex-direction: column; gap: 10px; }
+.opt { display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+       border: 1.5px solid #e2e8f0; border-radius: 10px; cursor: pointer;
+       transition: all .15s; user-select: none; }
+.opt:hover { border-color: #667eea; background: #f7f8ff; }
+.opt.selected { border-color: #667eea; background: #ebf4ff; }
+.opt input { accent-color: #667eea; width: 16px; height: 16px; flex-shrink: 0; }
+.opt label { font-size: 14px; color: #2d3748; cursor: pointer; flex: 1; }
+textarea { width: 100%; padding: 12px 14px; border: 1.5px solid #e2e8f0; border-radius: 10px;
+           font-size: 14px; color: #2d3748; resize: vertical; min-height: 80px; outline: none;
+           font-family: inherit; transition: border-color .15s; }
+textarea:focus { border-color: #667eea; }
+.required { color: #e53e3e; margin-left: 3px; }
+.btn-group { display: flex; gap: 12px; margin-top: 32px; }
+.btn { padding: 12px 28px; border-radius: 10px; border: none; font-size: 15px;
+       font-weight: 600; cursor: pointer; transition: opacity .15s; }
+.btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); color: white; flex: 1; }
+.btn-secondary { background: #edf2f7; color: #4a5568; }
+.btn:hover { opacity: .88; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.done-page { text-align: center; padding: 60px 20px; }
+.done-page .emoji { font-size: 56px; margin-bottom: 20px; }
+.done-page h2 { font-size: 22px; font-weight: 700; color: #2d3748; margin-bottom: 12px; }
+.done-page p { font-size: 15px; color: #718096; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>📋 医疗AI论文情报工具 · 用户调研</h1>
+  <p>约 3 分钟完成 · 帮助我们做得更适合你</p>
+</div>
+<div class="main">
+  <div class="progress-bar">
+    <div class="progress-fill" id="progressFill" style="width:10%"></div>
+  </div>
+  <div class="progress-text" id="progressText">第 1 题，共 10 题</div>
+
+  <div id="surveyForm">
+
+  <!-- Q1 -->
+  <div class="card" id="q1">
+    <div class="q-num">Q1 / 10</div>
+    <div class="q-text">你平时主要通过哪种方式跟进医疗AI最新论文？<span class="required">*</span></div>
+    <div class="q-hint">可多选</div>
+    <div class="options" id="opts_q1">
+      <div class="opt" onclick="toggleCheck(this,'q1','RSS/邮件订阅')"><input type="checkbox"><label>RSS / 邮件订阅（如 arxiv-sanity、ResearchGate）</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q1','社交媒体')"><input type="checkbox"><label>Twitter/X、微博、微信公众号等社交媒体</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q1','实验室内部分享')"><input type="checkbox"><label>实验室内部分享 / 组会</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q1','直接搜索')"><input type="checkbox"><label>直接去 arXiv / Google Scholar 搜索</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q1','别人推荐')"><input type="checkbox"><label>朋友、同学推荐</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q1','几乎不主动跟进')"><input type="checkbox"><label>几乎不主动跟进，靠碰到</label></div>
+    </div>
+  </div>
+
+  <!-- Q2 -->
+  <div class="card" id="q2">
+    <div class="q-num">Q2 / 10</div>
+    <div class="q-text">一周内你大概会主动看几次新论文？<span class="required">*</span></div>
+    <div class="options" id="opts_q2">
+      <div class="opt" onclick="selectOpt(this,'q2','几乎不看')"><input type="radio"><label>几乎不看，太忙了</label></div>
+      <div class="opt" onclick="selectOpt(this,'q2','1-2次')"><input type="radio"><label>1–2 次</label></div>
+      <div class="opt" onclick="selectOpt(this,'q2','3-5次')"><input type="radio"><label>3–5 次</label></div>
+      <div class="opt" onclick="selectOpt(this,'q2','每天都看')"><input type="radio"><label>每天都看</label></div>
+    </div>
+  </div>
+
+  <!-- Q3 -->
+  <div class="card" id="q3">
+    <div class="q-num">Q3 / 10</div>
+    <div class="q-text">你怎么判断一篇论文值不值得点开？<span class="required">*</span></div>
+    <div class="q-hint">可多选</div>
+    <div class="options" id="opts_q3">
+      <div class="opt" onclick="toggleCheck(this,'q3','标题吸引')"><input type="checkbox"><label>标题里有我关注的关键词</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q3','期刊/会议')"><input type="checkbox"><label>发在顶刊 / 顶会（Nature、MICCAI 等）</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q3','团队')"><input type="checkbox"><label>来自我知道的机构或团队</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q3','有中文摘要')"><input type="checkbox"><label>有中文摘要帮我快速判断</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q3','引用量/热度')"><input type="checkbox"><label>引用量或讨论热度高</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q3','别人推荐')"><input type="checkbox"><label>有人专门推荐给我</label></div>
+    </div>
+  </div>
+
+  <!-- Q4 -->
+  <div class="card" id="q4">
+    <div class="q-num">Q4 / 10</div>
+    <div class="q-text">你有没有遇过"这篇论文我应该早点看到"的情况？<span class="required">*</span></div>
+    <div class="options" id="opts_q4">
+      <div class="opt" onclick="selectOpt(this,'q4','经常有')"><input type="radio"><label>经常有，信息差很烦</label></div>
+      <div class="opt" onclick="selectOpt(this,'q4','偶尔有')"><input type="radio"><label>偶尔有</label></div>
+      <div class="opt" onclick="selectOpt(this,'q4','很少')"><input type="radio"><label>很少，现有方式基本够用</label></div>
+      <div class="opt" onclick="selectOpt(this,'q4','没感觉')"><input type="radio"><label>没这种感觉</label></div>
+    </div>
+  </div>
+
+  <!-- Q5 -->
+  <div class="card" id="q5">
+    <div class="q-num">Q5 / 10</div>
+    <div class="q-text">你现在跟进论文的方式里，最让你烦的是？<span class="required">*</span></div>
+    <div class="options" id="opts_q5">
+      <div class="opt" onclick="selectOpt(this,'q5','太多噪音')"><input type="radio"><label>太多噪音，非相关文章占了大多数</label></div>
+      <div class="opt" onclick="selectOpt(this,'q5','要花时间主动找')"><input type="radio"><label>要自己主动去找，没人帮我筛选</label></div>
+      <div class="opt" onclick="selectOpt(this,'q5','看不懂英文摘要')"><input type="radio"><label>英文摘要看起来费劲</label></div>
+      <div class="opt" onclick="selectOpt(this,'q5','没时间看')"><input type="radio"><label>根本没时间看，堆着</label></div>
+      <div class="opt" onclick="selectOpt(this,'q5','没什么烦')"><input type="radio"><label>没什么特别烦的</label></div>
+    </div>
+  </div>
+
+  <!-- Q6 -->
+  <div class="card" id="q6">
+    <div class="q-num">Q6 / 10</div>
+    <div class="q-text">如果每天收到一封医疗AI论文精选邮件，你会打开吗？<span class="required">*</span></div>
+    <div class="options" id="opts_q6">
+      <div class="opt" onclick="selectOpt(this,'q6','肯定打开')"><input type="radio"><label>肯定打开，我就缺这个</label></div>
+      <div class="opt" onclick="selectOpt(this,'q6','看标题决定')"><input type="radio"><label>看邮件标题决定，筛选得好才打开</label></div>
+      <div class="opt" onclick="selectOpt(this,'q6','偶尔打开')"><input type="radio"><label>偶尔打开，不会每天看</label></div>
+      <div class="opt" onclick="selectOpt(this,'q6','不会打开')"><input type="radio"><label>不会，邮件太多了已经不看了</label></div>
+    </div>
+  </div>
+
+  <!-- Q7 -->
+  <div class="card" id="q7">
+    <div class="q-num">Q7 / 10</div>
+    <div class="q-text">你更希望每日推送是哪种形式？<span class="required">*</span></div>
+    <div class="options" id="opts_q7">
+      <div class="opt" onclick="selectOpt(this,'q7','快速扫一眼')"><input type="radio"><label>快速扫一眼今天有什么（标题 + 一句话）</label></div>
+      <div class="opt" onclick="selectOpt(this,'q7','精读一篇')"><input type="radio"><label>每天精推 1 篇，帮我读完说结论</label></div>
+      <div class="opt" onclick="selectOpt(this,'q7','分类列表')"><input type="radio"><label>按分类列表（影像、NLP、可穿戴等）</label></div>
+      <div class="opt" onclick="selectOpt(this,'q7','都行')"><input type="radio"><label>都可以，只要筛得准</label></div>
+    </div>
+  </div>
+
+  <!-- Q8 -->
+  <div class="card" id="q8">
+    <div class="q-num">Q8 / 10</div>
+    <div class="q-text">以下哪个功能对你最有价值？<span class="required">*</span></div>
+    <div class="q-hint">可多选，最多选 3 个</div>
+    <div class="options" id="opts_q8">
+      <div class="opt" onclick="toggleCheck(this,'q8','中文标题翻译')"><input type="checkbox"><label>英文标题自动翻译成中文</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q8','AI中文摘要')"><input type="checkbox"><label>AI 生成中文摘要（100字以内）</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q8','按领域筛选')"><input type="checkbox"><label>按我关注的领域（影像、NLP…）精准筛选</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q8','收藏夹')"><input type="checkbox"><label>收藏感兴趣的论文，方便以后找</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q8','行业动态')"><input type="checkbox"><label>同时推送行业融资/产品动态（非仅学术）</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q8','小红书热点')"><input type="checkbox"><label>附带同话题小红书热门讨论</label></div>
+    </div>
+  </div>
+
+  <!-- Q9 -->
+  <div class="card" id="q9">
+    <div class="q-num">Q9 / 10</div>
+    <div class="q-text">如果这个工具足够好用，你更愿意用哪种方式接收？<span class="required">*</span></div>
+    <div class="options" id="opts_q9">
+      <div class="opt" onclick="selectOpt(this,'q9','邮件')"><input type="radio"><label>邮件（每天定时发）</label></div>
+      <div class="opt" onclick="selectOpt(this,'q9','微信公众号')"><input type="radio"><label>微信公众号推文</label></div>
+      <div class="opt" onclick="selectOpt(this,'q9','网页自己去看')"><input type="radio"><label>网页，我自己去刷</label></div>
+      <div class="opt" onclick="selectOpt(this,'q9','微信群')"><input type="radio"><label>发到微信群 / 飞书群</label></div>
+    </div>
+  </div>
+
+  <!-- Q10 -->
+  <div class="card" id="q10">
+    <div class="q-num">Q10 / 10</div>
+    <div class="q-text">如果让你改一个地方，让你愿意推荐给同学用，你会改什么？</div>
+    <div class="q-hint">随便说，哪怕一句话（选填）</div>
+    <textarea id="ans_q10" placeholder="比如：摘要太长了、分类不够准、想要更多临床方向的论文…" oninput="updateProgress()"></textarea>
+  </div>
+
+  <!-- 联系方式 -->
+  <div class="card">
+    <div class="q-num">可选</div>
+    <div class="q-text">留个邮箱，我们直接发给你试用链接</div>
+    <div class="q-hint">不留也没关系，问卷匿名提交</div>
+    <input id="contact_email" type="email" placeholder="your@email.com"
+      style="width:100%;padding:12px 14px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:14px;outline:none;font-family:inherit"
+      onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e2e8f0'">
+  </div>
+
+  <div class="btn-group">
+    <button class="btn btn-primary" id="submitBtn" onclick="submitSurvey()">提交问卷 →</button>
+  </div>
+
+  </div><!-- end surveyForm -->
+
+  <!-- 完成页 -->
+  <div id="donePage" class="card done-page" style="display:none">
+    <div class="emoji">🎉</div>
+    <h2>感谢你的反馈！</h2>
+    <p>你的答案将直接帮助我们改进产品。<br>如果留了邮箱，我们会优先给你发试用邀请。</p>
+    <a href="/" style="display:inline-block;margin-top:24px;padding:11px 28px;background:linear-gradient(135deg,#667eea,#764ba2);color:white;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px">去看看产品 →</a>
+  </div>
+</div>
+
+<script>
+const answers = {};
+
+function selectOpt(el, qid, val) {
+  document.querySelectorAll('#opts_' + qid + ' .opt').forEach(o => o.classList.remove('selected'));
+  el.classList.add('selected');
+  el.querySelector('input').checked = true;
+  answers[qid] = val;
+  updateProgress();
+}
+
+function toggleCheck(el, qid, val) {
+  el.classList.toggle('selected');
+  el.querySelector('input').checked = el.classList.contains('selected');
+  if (!answers[qid]) answers[qid] = [];
+  if (el.classList.contains('selected')) {
+    if (!answers[qid].includes(val)) answers[qid].push(val);
+  } else {
+    answers[qid] = answers[qid].filter(v => v !== val);
+  }
+  updateProgress();
+}
+
+function updateProgress() {
+  const required = ['q1','q2','q3','q4','q5','q6','q7','q8','q9'];
+  const answered = required.filter(q => answers[q] && (Array.isArray(answers[q]) ? answers[q].length > 0 : true)).length;
+  const pct = Math.round((answered / required.length) * 90) + 10;
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressText').textContent = `已完成 ${answered} / ${required.length} 题`;
+}
+
+async function submitSurvey() {
+  const required = ['q1','q2','q3','q4','q5','q6','q7','q8','q9'];
+  const missing = required.filter(q => !answers[q] || (Array.isArray(answers[q]) && answers[q].length === 0));
+  if (missing.length > 0) {
+    const firstMissing = document.getElementById(missing[0]);
+    firstMissing.scrollIntoView({behavior:'smooth', block:'center'});
+    firstMissing.style.border = '2px solid #e53e3e';
+    setTimeout(() => firstMissing.style.border = '', 2000);
+    alert('请完成所有必填题（标 * 的题目）');
+    return;
+  }
+  answers['q10'] = document.getElementById('ans_q10').value.trim();
+  answers['email'] = document.getElementById('contact_email').value.trim();
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true; btn.textContent = '提交中…';
+  try {
+    await fetch('/api/survey/submit', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(answers)
+    });
+    document.getElementById('surveyForm').style.display = 'none';
+    document.getElementById('donePage').style.display = 'block';
+    document.getElementById('progressFill').style.width = '100%';
+    document.getElementById('progressText').textContent = '已完成';
+  } catch(e) {
+    btn.disabled = false; btn.textContent = '提交问卷 →';
+    alert('提交失败，请重试');
+  }
+}
+</script>
+</body>
+</html>"""
+
 STUDIO_HTML = """<!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -3824,6 +4102,28 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", len(body))
             self.end_headers()
             self.wfile.write(body)
+
+        elif path == "/survey":
+            body = SURVEY_HTML.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", len(body))
+            self.end_headers()
+            self.wfile.write(body)
+
+        elif self.path == "/api/survey/submit":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            conn = get_conn(DB_PATH)
+            try:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS survey_responses (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, submitted_at TEXT DEFAULT (datetime('now')))"
+                )
+                conn.execute("INSERT INTO survey_responses (data) VALUES (?)", (json.dumps(body, ensure_ascii=False),))
+                conn.commit()
+            finally:
+                conn.close()
+            self.send_json({"ok": True})
 
         elif path == "/api/auth/me":
             user = _get_session(self)
