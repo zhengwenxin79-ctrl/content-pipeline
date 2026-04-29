@@ -1399,15 +1399,16 @@ def get_digest_data(days=2):
     need_summary = [a for a in all_articles if not a.get("ai_summary")]
     generating_summaries = len(need_summary) > 0
 
+    # 已有缓存的先同步到 summary 字段
+    for a in all_articles:
+        if a.get("ai_summary") and not a.get("summary"):
+            a["summary"] = a["ai_summary"]
+
     if generating_summaries:
-        # 后台线程异步生成，不阻塞接口返回
+        # 后台线程异步生成剩余文章的摘要，不阻塞接口返回
         import threading
         t = threading.Thread(target=generate_ai_summaries_and_cache, args=(all_articles,), daemon=True)
         t.start()
-    else:
-        for a in all_articles:
-            if a.get("ai_summary") and not a.get("summary"):
-                a["summary"] = a["ai_summary"]
 
     # 批量翻译英文标题
     translations = translate_titles(all_articles)
@@ -2179,6 +2180,15 @@ function renderDigest(digest) {
               ${a.score.toFixed(1)}分 · ${a.source}${datePart}
             </div>
             ${a.summary ? `<div class="article-summary">${a.summary}</div>` : ''}
+            <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+              <button onclick="toggleDeepAnalysis(${a.id})"
+                id="btn-analyze-${a.id}"
+                style="font-size:12px;color:#667eea;background:#f0f4ff;border:1px solid #c3dafe;padding:4px 12px;border-radius:12px;cursor:pointer;font-weight:500">
+                🔬 深度分析
+              </button>
+              ${a.url ? `<a href="${a.url}" target="_blank" style="font-size:12px;color:#a0aec0;text-decoration:none">查看原文 →</a>` : ''}
+            </div>
+            <div id="deep-${a.id}" style="display:none;margin-top:12px"></div>
           </div>
         </div>
       </div>`;
@@ -2715,6 +2725,68 @@ async function refreshCurrentFeed() {
 }
 
 // ── 收藏功能 ──────────────────────────────────────────
+async function toggleDeepAnalysis(id) {
+  const container = document.getElementById('deep-' + id);
+  const btn = document.getElementById('btn-analyze-' + id);
+  if (!container) return;
+
+  // 已展开则折叠
+  if (container.style.display !== 'none') {
+    container.style.display = 'none';
+    btn.textContent = '🔬 深度分析';
+    return;
+  }
+
+  // 已有内容则直接展开
+  if (container.dataset.loaded) {
+    container.style.display = 'block';
+    btn.textContent = '▲ 收起';
+    return;
+  }
+
+  // 请求生成
+  btn.textContent = '⏳ 分析中…';
+  btn.disabled = true;
+  container.style.display = 'block';
+  container.innerHTML = `<div style="display:flex;align-items:center;gap:10px;padding:16px;background:#f7fafc;border-radius:10px;color:#718096;font-size:13px">
+    <div style="width:16px;height:16px;border:2px solid #667eea;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0"></div>
+    DeepSeek 正在深度分析这篇论文，约 10 秒…
+  </div>`;
+
+  try {
+    const res = await fetch('/api/article/analyze?id=' + id);
+    const data = await res.json();
+    if (!data.ok) {
+      container.innerHTML = `<div style="padding:12px;color:#e53e3e;font-size:13px;background:#fff5f5;border-radius:8px">${data.msg}</div>`;
+      btn.textContent = '🔬 深度分析';
+      btn.disabled = false;
+      return;
+    }
+    // 将 emoji 段落渲染为卡片
+    const sections = data.analysis.split(/\n(?=[🔬⚡📊🗄💻💡⚠])/u).filter(s => s.trim());
+    const sectionColors = {'🔬':'#ebf8ff','⚡':'#fefcbf','📊':'#f0fff4','🗄':'#faf5ff','💻':'#e6fffa','💡':'#fffaf0','⚠':'#fff5f5'};
+    const html = sections.map(s => {
+      const emoji = [...s][0];
+      const color = sectionColors[emoji] || '#f7fafc';
+      const lines = s.trim().split('\n');
+      const title = lines[0];
+      const body = lines.slice(1).join('\n').trim();
+      return `<div style="background:${color};border-radius:8px;padding:12px 14px;margin-bottom:8px">
+        <div style="font-size:13px;font-weight:600;color:#2d3748;margin-bottom:${body?'6px':'0'}">${title}</div>
+        ${body ? `<div style="font-size:13px;color:#4a5568;line-height:1.7;white-space:pre-line">${body}</div>` : ''}
+      </div>`;
+    }).join('');
+    container.innerHTML = html;
+    container.dataset.loaded = '1';
+    btn.textContent = '▲ 收起';
+    btn.disabled = false;
+  } catch(e) {
+    container.innerHTML = `<div style="padding:12px;color:#e53e3e;font-size:13px">请求失败：${e.message}</div>`;
+    btn.textContent = '🔬 深度分析';
+    btn.disabled = false;
+  }
+}
+
 async function toggleStar(id) {
   if (!requireLogin()) return;
   const btn = document.getElementById('star-' + id);
@@ -4647,6 +4719,69 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             self.send_json({"ok": True, "total": len(responses), "responses": responses})
+
+        elif path == "/api/article/analyze":
+            qs = parse_qs(urlparse(self.path).query)
+            article_id = qs.get("id", [""])[0]
+            if not article_id:
+                self.send_json({"ok": False, "msg": "缺少 id 参数"}); return
+            try:
+                article_id = int(article_id)
+            except ValueError:
+                self.send_json({"ok": False, "msg": "id 格式错误"}); return
+
+            conn = get_conn(DB_PATH)
+            try:
+                row = conn.execute(
+                    "SELECT id, title, content, source_name, url, COALESCE(deep_analysis,'') as deep_analysis FROM articles WHERE id=?",
+                    (article_id,)
+                ).fetchone()
+            finally:
+                conn.close()
+
+            if not row:
+                self.send_json({"ok": False, "msg": "文章不存在"}); return
+
+            # 已有缓存直接返回
+            if row["deep_analysis"]:
+                self.send_json({"ok": True, "analysis": row["deep_analysis"], "cached": True}); return
+
+            # 生成深度分析
+            title = row["title"] or ""
+            content = (row["content"] or "")[:3000]
+            source = row["source_name"] or ""
+            prompt = (
+                "你是医疗AI领域的科研助手，请对以下论文进行深度分析，输出结构化中文报告（总计300-500字）。\n\n"
+                "严格按以下7个维度输出，每个维度一段，用emoji标题开头：\n"
+                "🔬 核心问题：这篇文章在解决什么临床/科研问题？\n"
+                "⚡ 方法创新：提出了什么新方法、新架构或新思路？\n"
+                "📊 关键结果：最重要的实验数字、指标对比、性能提升？\n"
+                "🗄️ 数据集：使用了哪些数据集？规模多大？是否公开可用？\n"
+                "💻 代码/模型：是否开源？有无 GitHub 链接或预训练权重？\n"
+                "💡 价值判断：对 AI 工程师或临床研究者的实际价值是什么？\n"
+                "⚠️ 局限性：有什么明显缺陷、未解决的问题或适用范围限制？\n\n"
+                f"论文来源：{source}\n"
+                f"标题：{title}\n"
+                f"内容：{content}"
+            )
+            try:
+                from openai import OpenAI
+                client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+                resp = client.chat.completions.create(
+                    model="deepseek-chat", timeout=60, max_tokens=1200,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                analysis = resp.choices[0].message.content.strip()
+                # 缓存到数据库
+                conn = get_conn(DB_PATH)
+                try:
+                    conn.execute("UPDATE articles SET deep_analysis=? WHERE id=?", (analysis, article_id))
+                    conn.commit()
+                finally:
+                    conn.close()
+                self.send_json({"ok": True, "analysis": analysis, "cached": False})
+            except Exception as e:
+                self.send_json({"ok": False, "msg": f"生成失败：{e}"})
 
         elif path == "/api/survey/analyze":
             user = _get_session(self)

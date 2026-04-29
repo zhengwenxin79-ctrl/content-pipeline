@@ -159,6 +159,7 @@ def init_db(db_path: str = "corpus/corpus.db"):
         "ALTER TABLE articles ADD COLUMN is_starred INTEGER DEFAULT 0",
         "ALTER TABLE subscriptions ADD COLUMN research_direction TEXT DEFAULT ''",
         "ALTER TABLE articles ADD COLUMN ai_summary TEXT DEFAULT ''",
+        "ALTER TABLE articles ADD COLUMN deep_analysis TEXT DEFAULT ''",
         """CREATE TABLE IF NOT EXISTS app_state (
             key   TEXT PRIMARY KEY,
             value TEXT
