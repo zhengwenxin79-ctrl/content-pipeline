@@ -1395,12 +1395,19 @@ def get_digest_data(days=2):
         result[cat].append(article)
         all_articles.append(article)
 
-    # 批量生成并缓存 AI 一句话总结（只对没有缓存的文章生成）
-    generate_ai_summaries_and_cache(all_articles)
-    # 生成后同步到 summary 字段供前端使用
-    for a in all_articles:
-        if a.get("ai_summary") and not a.get("summary"):
-            a["summary"] = a["ai_summary"]
+    # 统计需要生成摘要的文章数
+    need_summary = [a for a in all_articles if not a.get("ai_summary")]
+    generating_summaries = len(need_summary) > 0
+
+    if generating_summaries:
+        # 后台线程异步生成，不阻塞接口返回
+        import threading
+        t = threading.Thread(target=generate_ai_summaries_and_cache, args=(all_articles,), daemon=True)
+        t.start()
+    else:
+        for a in all_articles:
+            if a.get("ai_summary") and not a.get("summary"):
+                a["summary"] = a["ai_summary"]
 
     # 批量翻译英文标题
     translations = translate_titles(all_articles)
@@ -1409,6 +1416,8 @@ def get_digest_data(days=2):
             if a["id"] in translations:
                 a["title_zh"] = translations[a["id"]]
 
+    result["_generating_summaries"] = generating_summaries
+    result["_need_summary_count"] = len(need_summary)
     return result
 
 
@@ -1472,6 +1481,7 @@ HTML = """<!DOCTYPE html>
   .article-title a:hover { color: #667eea; }
   .article-title-zh { font-size: 13px; color: #667eea; margin-top: 3px; font-weight: 500; }
   .article-meta { font-size: 12px; color: #a0aec0; margin-top: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .article-summary { font-size: 13px; color: #4a5568; margin-top: 8px;
                      line-height: 1.6; display: -webkit-box;
                      -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -1770,6 +1780,10 @@ HTML = """<!DOCTYPE html>
 
 <div class="page active" id="page-digest">
   <div class="main">
+    <div id="summaryGeneratingBanner" style="display:none;align-items:center;gap:10px;background:#fffbeb;border:1px solid #f6e05e;border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:13px;color:#744210">
+      <div style="width:16px;height:16px;border:2px solid #f6ad55;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0"></div>
+      <span>AI 正在生成摘要…</span>
+    </div>
     <div class="stats-row" id="statsRow"></div>
     <div id="logBox" class="log-box"></div>
     <div id="content"></div>
@@ -2086,11 +2100,32 @@ HTML = """<!DOCTYPE html>
 let polling = null;
 let _currentUser = null;
 
+let _summaryPollTimer = null;
+
 async function loadData() {
   const res = await fetch('/api/digest');
   const data = await res.json();
   renderStats(data.stats);
   renderDigest(data.digest);
+
+  // 如果有文章正在后台生成 AI 摘要，显示提示并自动轮询
+  const banner = document.getElementById('summaryGeneratingBanner');
+  if (data.digest && data.digest._generating_summaries) {
+    const count = data.digest._need_summary_count || 0;
+    if (banner) {
+      banner.style.display = 'flex';
+      banner.querySelector('span').textContent =
+        `AI 正在为 ${count} 篇文章生成一句话摘要，约 ${Math.ceil(count * 0.8)} 秒后自动刷新…`;
+    }
+    if (_summaryPollTimer) clearTimeout(_summaryPollTimer);
+    _summaryPollTimer = setTimeout(() => {
+      if (banner) banner.style.display = 'none';
+      loadData();
+    }, Math.max(10000, count * 800));
+  } else {
+    if (banner) banner.style.display = 'none';
+    if (_summaryPollTimer) { clearTimeout(_summaryPollTimer); _summaryPollTimer = null; }
+  }
 }
 
 function renderStats(s) {
