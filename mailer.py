@@ -216,8 +216,13 @@ def generate_summaries(articles: list, api_key: str) -> list:
             for a in articles
         ])
 
-        prompt = f"""请为以下医疗AI文章各生成一句话中文摘要（25字以内），说清楚"谁做了什么，结论是什么"。
-只输出JSON，格式：{{"summaries": [{{"id": 1, "summary": "摘要内容"}}]}}
+        prompt = f"""你是医疗AI领域的科研助手。请为以下论文/文章各写一句话核心总结，要求：
+1. 40字以内
+2. 格式：[做了什么] + [关键结论或数字]
+3. 直接说结论，不要用"本文"、"研究者"等开头
+4. 举例：「提出基于Transformer的ECG分类模型，在MIT-BIH数据集上F1达97.3%，超越现有方法4%」
+
+只输出JSON，格式：{{"summaries": [{{"id": 1, "summary": "一句话总结"}}]}}
 
 文章列表：
 {articles_text}"""
@@ -262,13 +267,18 @@ def build_html(keywords: str, articles: list, date_str: str, xhs_notes: list = N
             f'<div style="font-size:12px;color:#667eea;margin-bottom:6px;font-weight:500">'
             f'🎯 为什么推给你：{reason}</div>'
         ) if reason else ""
+        summary_html = (
+            f'<div style="font-size:13px;font-weight:500;color:#2d3748;margin-bottom:8px;'
+            f'line-height:1.6;background:#fffbeb;padding:8px 12px;border-radius:6px;'
+            f'border-left:3px solid #f6ad55">💡 {summary}</div>'
+        ) if summary else ""
         articles_html += f"""
         <div style="padding:16px 0;border-bottom:1px solid #f0f0f0">
           <div style="font-size:15px;font-weight:600;color:#2d3748;margin-bottom:6px;line-height:1.5">
             <a href="{url}" style="color:#2d3748;text-decoration:none">{i}. {a['title']}</a>
           </div>
+          {summary_html}
           {reason_html}
-          {"" if not summary else f'<div style="font-size:13px;color:#4a5568;margin-bottom:8px;line-height:1.6;background:#f7fafc;padding:8px 12px;border-radius:6px;border-left:3px solid #667eea">{summary}</div>'}
           <div style="font-size:12px;color:#a0aec0">
             📰 {source} &nbsp;·&nbsp; 📅 {pub} &nbsp;·&nbsp; ⭐ {score:.1f}分
             &nbsp;·&nbsp; <a href="{url}" style="color:#667eea">查看原文 →</a>
