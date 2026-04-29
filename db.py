@@ -157,6 +157,7 @@ def init_db(db_path: str = "corpus/corpus.db"):
         "ALTER TABLE drafts ADD COLUMN source_article_ids TEXT",
         "ALTER TABLE drafts ADD COLUMN generate_type TEXT",
         "ALTER TABLE articles ADD COLUMN is_starred INTEGER DEFAULT 0",
+        "ALTER TABLE subscriptions ADD COLUMN research_direction TEXT DEFAULT ''",
         """CREATE TABLE IF NOT EXISTS app_state (
             key   TEXT PRIMARY KEY,
             value TEXT
@@ -300,6 +301,7 @@ def save_title_suggestions(topic: str, titles: list, analysis: str,
 
 
 def add_subscription(email: str, keywords: str, api_key: str = None,
+                     research_direction: str = "",
                      db_path: str = "corpus/corpus.db") -> dict:
     """新增订阅，邮箱已存在则返回错误"""
     import base64
@@ -311,17 +313,16 @@ def add_subscription(email: str, keywords: str, api_key: str = None,
         ).fetchone()
         if exists:
             if exists["active"] == 0:
-                # 曾经退订，重新激活
                 conn.execute(
-                    "UPDATE subscriptions SET keywords=?, api_key=?, active=1 WHERE email=?",
-                    (keywords, encoded_key, email)
+                    "UPDATE subscriptions SET keywords=?, api_key=?, active=1, research_direction=? WHERE email=?",
+                    (keywords, encoded_key, research_direction, email)
                 )
                 conn.commit()
                 return {"ok": True, "msg": "已重新激活订阅"}
             return {"ok": False, "msg": "该邮箱已订阅，如需修改请使用更新功能"}
         conn.execute(
-            "INSERT INTO subscriptions (email, keywords, api_key) VALUES (?, ?, ?)",
-            (email, keywords, encoded_key)
+            "INSERT INTO subscriptions (email, keywords, api_key, research_direction) VALUES (?, ?, ?, ?)",
+            (email, keywords, encoded_key, research_direction)
         )
         conn.commit()
         return {"ok": True, "msg": "订阅成功"}
@@ -330,8 +331,9 @@ def add_subscription(email: str, keywords: str, api_key: str = None,
 
 
 def update_subscription(email: str, keywords: str, api_key: str = None,
+                        research_direction: str = None,
                         db_path: str = "corpus/corpus.db") -> dict:
-    """修改订阅关键词"""
+    """修改订阅关键词和研究方向"""
     import base64
     conn = get_conn(db_path)
     try:
@@ -343,16 +345,16 @@ def update_subscription(email: str, keywords: str, api_key: str = None,
         if api_key:
             encoded_key = base64.b64encode(api_key.encode()).decode()
             conn.execute(
-                "UPDATE subscriptions SET keywords=?, api_key=? WHERE email=?",
-                (keywords, encoded_key, email)
+                "UPDATE subscriptions SET keywords=?, api_key=?, research_direction=COALESCE(?,research_direction) WHERE email=?",
+                (keywords, encoded_key, research_direction, email)
             )
         else:
             conn.execute(
-                "UPDATE subscriptions SET keywords=? WHERE email=?",
-                (keywords, email)
+                "UPDATE subscriptions SET keywords=?, research_direction=COALESCE(?,research_direction) WHERE email=?",
+                (keywords, research_direction, email)
             )
         conn.commit()
-        return {"ok": True, "msg": "关键词已更新"}
+        return {"ok": True, "msg": "订阅已更新"}
     finally:
         conn.close()
 

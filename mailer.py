@@ -49,6 +49,75 @@ def _build_xhs_queries(keywords: str) -> list:
     return list(dict.fromkeys(queries))  # 去重保序
 
 
+def rerank_articles(articles: list, research_direction: str, api_key: str = "") -> list:
+    """
+    用 LLM 按用户研究方向对候选文章重排序，返回 Top 5，每篇附推荐理由。
+    如果重排失败，原样返回前5篇（保证推送不中断）。
+    """
+    if not research_direction or not articles:
+        return articles[:5]
+
+    key = api_key or DEEPSEEK_API_KEY
+    if not key:
+        return articles[:5]
+
+    candidates = articles[:30]  # 最多取30篇喂给LLM，控制token消耗
+    lines = []
+    for a in candidates:
+        summary = (a.get("content") or a.get("summary") or "")[:200]
+        lines.append(f'{a["id"]}|{a["title"]}|{summary}')
+    candidates_text = "\n".join(lines)
+
+    prompt = f"""你是一位科研助手，请根据用户的研究方向，从以下候选论文中挑出最相关的5篇。
+
+用户研究方向：{research_direction}
+
+候选论文（格式：ID|标题|摘要片段）：
+{candidates_text}
+
+要求：
+1. 只返回最相关的5篇，按相关性从高到低排序
+2. 每篇写一句话推荐理由（15字以内，说明为什么和用户研究方向相关）
+3. 严格按以下格式输出，每行一篇，不要输出其他内容：
+ID|推荐理由"""
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=key, base_url="https://api.deepseek.com")
+        resp = client.chat.completions.create(
+            model="deepseek-chat",
+            timeout=30,
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        id_map = {a["id"]: a for a in candidates}
+        result = []
+        for line in resp.choices[0].message.content.strip().split("\n"):
+            if "|" not in line:
+                continue
+            parts = line.split("|", 1)
+            try:
+                aid = int(parts[0].strip())
+            except ValueError:
+                continue
+            if aid in id_map:
+                article = dict(id_map[aid])
+                article["recommend_reason"] = parts[1].strip() if len(parts) > 1 else ""
+                result.append(article)
+        # 如果LLM返回不足5篇，用原始顺序补齐
+        returned_ids = {a["id"] for a in result}
+        for a in candidates:
+            if len(result) >= 5:
+                break
+            if a["id"] not in returned_ids:
+                result.append(a)
+        print(f"  → LLM重排序完成，返回 {len(result)} 篇")
+        return result
+    except Exception as e:
+        print(f"  ⚠ LLM重排序失败，使用原始排序: {e}")
+        return articles[:5]
+
+
 def fetch_xhs_for_keywords(keywords: str, cookie: str = "", candidate_pool: int = 5) -> list:
     """按关键词抓取小红书热门笔记（自动加医疗AI语境前缀）"""
     if not cookie:
@@ -188,11 +257,17 @@ def build_html(keywords: str, articles: list, date_str: str, xhs_notes: list = N
         pub = (a.get("published_at") or "")[:10] or "未知日期"
         score = a.get("quality_score") or 0
 
+        reason = a.get("recommend_reason", "")
+        reason_html = (
+            f'<div style="font-size:12px;color:#667eea;margin-bottom:6px;font-weight:500">'
+            f'🎯 为什么推给你：{reason}</div>'
+        ) if reason else ""
         articles_html += f"""
         <div style="padding:16px 0;border-bottom:1px solid #f0f0f0">
           <div style="font-size:15px;font-weight:600;color:#2d3748;margin-bottom:6px;line-height:1.5">
             <a href="{url}" style="color:#2d3748;text-decoration:none">{i}. {a['title']}</a>
           </div>
+          {reason_html}
           {"" if not summary else f'<div style="font-size:13px;color:#4a5568;margin-bottom:8px;line-height:1.6;background:#f7fafc;padding:8px 12px;border-radius:6px;border-left:3px solid #667eea">{summary}</div>'}
           <div style="font-size:12px;color:#a0aec0">
             📰 {source} &nbsp;·&nbsp; 📅 {pub} &nbsp;·&nbsp; ⭐ {score:.1f}分
@@ -319,13 +394,22 @@ def run_daily_push(db_path: str = DB_PATH):
             except Exception:
                 api_key = DEEPSEEK_API_KEY  # 回退到系统key
 
+        research_direction = sub.get("research_direction") or ""
         print(f"  处理: {email} | 关键词: {keywords}")
+        if research_direction:
+            print(f"  研究方向: {research_direction[:40]}...")
 
-        # 匹配文章
+        # 匹配文章（初筛）
         articles = match_articles(keywords, days=1, db_path=db_path)
         if not articles:
             print(f"  → 今日无匹配文章，跳过")
             continue
+
+        # LLM 重排序（有研究方向时启用）
+        if research_direction:
+            articles = rerank_articles(articles, research_direction, api_key or DEEPSEEK_API_KEY)
+        else:
+            articles = articles[:10]
 
         print(f"  → 匹配到 {len(articles)} 篇，生成摘要...")
 

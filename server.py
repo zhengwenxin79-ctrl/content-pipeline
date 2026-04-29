@@ -1918,6 +1918,18 @@ HTML = """<!DOCTYPE html>
             <div style="font-size:12px;font-weight:600;color:#a0aec0;letter-spacing:.06em;margin-bottom:10px">选择领域（可多选）</div>
             <div style="display:flex;flex-wrap:wrap;gap:8px" id="subTagList"></div>
           </div>
+          <!-- 研究方向描述（AI重排序） -->
+          <div style="margin-top:4px">
+            <label style="font-size:13px;font-weight:600;color:#2d3748;display:block;margin-bottom:6px">
+              🎯 你的研究方向
+              <span style="font-weight:400;color:#a0aec0;font-size:12px">（选填，填写后 AI 会为你智能挑选最相关的论文）</span>
+            </label>
+            <textarea id="sub-research-direction" rows="2"
+              placeholder="如：我做心脏超声图像分割，关注轻量化模型在移动端的部署，以及多中心数据泛化问题"
+              style="width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none;resize:vertical;font-family:inherit;line-height:1.5"
+              onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e2e8f0'"></textarea>
+            <div style="font-size:12px;color:#a0aec0;margin-top:4px">填写后每日推送会附上"为什么推给你"的理由</div>
+          </div>
           <!-- 高级：自定义关键词 -->
           <details style="margin-top:4px">
             <summary style="font-size:13px;color:#667eea;cursor:pointer;font-weight:500">＋ 高级：自定义关键词</summary>
@@ -3492,6 +3504,9 @@ async function loadSubscriptions() {
       `<span style="background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.3);border-radius:14px;padding:3px 10px;font-size:12px">${k.trim()}</span>`
     ).join('') + (data.keywords.split(',').length > 6 ? `<span style="font-size:12px;opacity:.6"> +${data.keywords.split(',').length-6} 个</span>` : '');
     document.getElementById('sub-keywords').value = data.keywords;
+    if (data.research_direction) {
+      document.getElementById('sub-research-direction').value = data.research_direction;
+    }
     formTitle.textContent = '修改推送领域';
     cancelBtn.style.display = 'inline-block';
     testBtn.style.display = 'inline-block';
@@ -3516,10 +3531,11 @@ async function subSaveKeywords() {
   if (!_currentUser) { requireLogin(subSaveKeywords); return; }
   const keywords = document.getElementById('sub-keywords').value.trim();
   if (!keywords) { showSubMsg('请填写关键词', false); return; }
+  const research_direction = document.getElementById('sub-research-direction').value.trim();
   const res = await fetch('/api/subscribe/save', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({keywords})
+    body: JSON.stringify({keywords, research_direction})
   });
   const data = await res.json();
   showSubMsg(data.msg, data.ok);
@@ -3721,12 +3737,243 @@ function setLayoutMode(el, v) {
 </body>
 </html>"""
 
+SURVEY_RESULTS_HTML = """<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问卷结果 · 管理员</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+       background: #f0f4f8; color: #1a202c; min-height: 100vh; }
+.header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: white; padding: 20px 32px; display: flex; align-items: center; justify-content: space-between; }
+.header h1 { font-size: 20px; font-weight: 700; }
+.header p { font-size: 13px; opacity: 0.8; margin-top: 4px; }
+.back { font-size: 13px; color: rgba(255,255,255,.8); text-decoration: none;
+        border: 1px solid rgba(255,255,255,.3); padding: 5px 14px; border-radius: 6px; }
+.main { max-width: 960px; margin: 28px auto; padding: 0 20px 60px; }
+.summary-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap: 14px; margin-bottom: 28px; }
+.stat-card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.07); text-align: center; }
+.stat-card .num { font-size: 32px; font-weight: 700; color: #667eea; }
+.stat-card .label { font-size: 12px; color: #a0aec0; margin-top: 4px; }
+.section { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 4px rgba(0,0,0,.07); margin-bottom: 20px; }
+.section-title { font-size: 14px; font-weight: 700; color: #2d3748; margin-bottom: 16px; }
+.bar-item { margin-bottom: 10px; }
+.bar-label { font-size: 13px; color: #4a5568; margin-bottom: 4px; display: flex; justify-content: space-between; }
+.bar-track { background: #edf2f7; border-radius: 6px; height: 10px; }
+.bar-fill { background: linear-gradient(90deg, #667eea, #764ba2); height: 10px; border-radius: 6px; transition: width .6s; }
+.response-card { border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin-bottom: 12px; font-size: 13px; }
+.response-card .meta { font-size: 12px; color: #a0aec0; margin-bottom: 10px; }
+.response-card .field { margin-bottom: 6px; }
+.response-card .field b { color: #4a5568; }
+.email-tag { display: inline-block; background: #ebf4ff; color: #667eea; border-radius: 12px; padding: 2px 10px; font-size: 12px; font-weight: 600; }
+.tabs { display: flex; gap: 8px; margin-bottom: 24px; flex-wrap: wrap; }
+.tab-btn { padding: 8px 18px; border-radius: 20px; border: 1.5px solid #e2e8f0; background: white; font-size: 13px; font-weight: 600; cursor: pointer; color: #4a5568; }
+.tab-btn.active { background: #667eea; color: white; border-color: #667eea; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div><h1>📊 问卷调研结果</h1><p>管理员视图</p></div>
+  <a href="/survey" class="back">← 问卷页面</a>
+</div>
+<div class="main">
+  <div id="loading" style="text-align:center;padding:60px;color:#a0aec0">加载中…</div>
+  <div id="content" style="display:none">
+    <div class="summary-row" id="summaryRow"></div>
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchView('charts')">📊 统计图表</button>
+      <button class="tab-btn" onclick="switchView('responses')">📋 原始回复</button>
+      <button class="tab-btn" onclick="switchView('emails')">📧 留邮用户</button>
+      <button class="tab-btn" onclick="switchView('ai')" id="tabAI">🤖 AI 分析</button>
+    </div>
+    <div id="viewCharts"></div>
+    <div id="viewResponses" style="display:none"></div>
+    <div id="viewEmails" style="display:none"></div>
+    <div id="viewAi" style="display:none"></div>
+  </div>
+</div>
+<script>
+const Q_LABELS = {
+  q1: '上次主动看论文',
+  q2: '获取渠道',
+  q3: '判断是否点开的标准',
+  q4: '最痛苦的环节',
+  q5: '信息差经历',
+  q6: '邮件订阅真实习惯',
+  q7: '最可能打开的场景',
+  q8: '偏好接收方式',
+  q9: '看到好论文当下的动作',
+  q10: '收藏论文的结局',
+  q11: '收藏库最吸引你的功能',
+  q12: '最有价值的功能',
+  q13: '偏好推送形式',
+  q14: '用户身份/方向',
+};
+
+let _responses = [];
+
+async function load() {
+  const res = await fetch('/api/survey/results');
+  const data = await res.json();
+  if (!data.ok) { document.getElementById('loading').textContent = '无权限'; return; }
+  _responses = data.responses;
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('content').style.display = 'block';
+  renderSummary(data.total);
+  renderCharts();
+  renderResponses();
+  renderEmails();
+}
+
+function renderSummary(total) {
+  const withEmail = _responses.filter(r => r.email).length;
+  const today = new Date().toISOString().slice(0,10);
+  const todayCount = _responses.filter(r => (r._submitted_at||'').startsWith(today)).length;
+  document.getElementById('summaryRow').innerHTML = `
+    <div class="stat-card"><div class="num">${total}</div><div class="label">总回复数</div></div>
+    <div class="stat-card"><div class="num">${todayCount}</div><div class="label">今日新增</div></div>
+    <div class="stat-card"><div class="num">${withEmail}</div><div class="label">留了邮箱</div></div>
+  `;
+}
+
+function countField(qid) {
+  const counts = {};
+  _responses.forEach(r => {
+    const val = r[qid];
+    if (!val) return;
+    const vals = Array.isArray(val) ? val : [val];
+    vals.forEach(v => { counts[v] = (counts[v] || 0) + 1; });
+  });
+  return Object.entries(counts).sort((a,b) => b[1]-a[1]);
+}
+
+function renderCharts() {
+  const container = document.getElementById('viewCharts');
+  const total = _responses.length || 1;
+  let html = '';
+  Object.entries(Q_LABELS).forEach(([qid, label]) => {
+    const counts = countField(qid);
+    if (!counts.length) return;
+    html += `<div class="section"><div class="section-title">${label}</div>`;
+    counts.forEach(([val, cnt]) => {
+      const pct = Math.round(cnt / total * 100);
+      html += `<div class="bar-item">
+        <div class="bar-label"><span>${val}</span><span>${cnt} 人 (${pct}%)</span></div>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+      </div>`;
+    });
+    html += '</div>';
+  });
+  container.innerHTML = html || '<div class="section" style="color:#a0aec0;text-align:center;padding:40px">暂无数据</div>';
+}
+
+function renderResponses() {
+  const container = document.getElementById('viewResponses');
+  if (!_responses.length) {
+    container.innerHTML = '<div class="section" style="color:#a0aec0;text-align:center;padding:40px">暂无数据</div>';
+    return;
+  }
+  let html = '';
+  _responses.forEach(r => {
+    html += `<div class="response-card">
+      <div class="meta">#${r._id} · ${(r._submitted_at||'').slice(0,16)} ${r.email ? `<span class="email-tag">${r.email}</span>` : ''}</div>`;
+    Object.entries(Q_LABELS).forEach(([qid, label]) => {
+      const val = r[qid];
+      if (!val) return;
+      const display = Array.isArray(val) ? val.join('、') : val;
+      html += `<div class="field"><b>${label}：</b>${display}</div>`;
+    });
+    if (r.q15_open) html += `<div class="field"><b>改进建议：</b>${r.q15_open}</div>`;
+    html += '</div>';
+  });
+  container.innerHTML = html;
+}
+
+function renderEmails() {
+  const container = document.getElementById('viewEmails');
+  const withEmail = _responses.filter(r => r.email);
+  if (!withEmail.length) {
+    container.innerHTML = '<div class="section" style="color:#a0aec0;text-align:center;padding:40px">暂无留邮用户</div>';
+    return;
+  }
+  let html = '<div class="section"><div class="section-title">已留邮箱的用户</div>';
+  withEmail.forEach(r => {
+    html += `<div style="padding:10px 0;border-bottom:1px solid #f7fafc;font-size:14px">
+      <span class="email-tag">${r.email}</span>
+      <span style="color:#718096;margin-left:10px;font-size:12px">${(r._submitted_at||'').slice(0,10)}</span>
+      <span style="color:#4a5568;margin-left:10px">${r.q14 || ''}</span>
+    </div>`;
+  });
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+function switchView(view) {
+  ['charts','responses','emails','ai'].forEach(v => {
+    document.getElementById('view'+v.charAt(0).toUpperCase()+v.slice(1)).style.display = v === view ? 'block' : 'none';
+  });
+  document.querySelectorAll('.tab-btn').forEach((btn, i) => {
+    btn.classList.toggle('active', ['charts','responses','emails','ai'][i] === view);
+  });
+  if (view === 'ai') loadAIAnalysis();
+}
+
+let _aiLoaded = false;
+async function loadAIAnalysis() {
+  if (_aiLoaded) return;
+  const container = document.getElementById('viewAi');
+  container.innerHTML = `<div class="section" style="text-align:center;padding:48px 20px">
+    <div style="font-size:32px;margin-bottom:16px">🤖</div>
+    <div style="color:#4a5568;font-size:15px;margin-bottom:8px">正在分析问卷数据…</div>
+    <div style="color:#a0aec0;font-size:13px">DeepSeek 正在读取所有回复并生成建议，约需 10-20 秒</div>
+  </div>`;
+  try {
+    const res = await fetch('/api/survey/analyze');
+    const data = await res.json();
+    if (!data.ok) {
+      container.innerHTML = `<div class="section" style="color:#e53e3e;padding:32px">${data.msg}</div>`;
+      return;
+    }
+    // 将 markdown 加粗转为 HTML
+    const html = data.analysis
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .split('\\n\\n').join('</p><p>')
+      .split('\\n').join('<br>');
+    container.innerHTML = `
+      <div class="section" style="line-height:1.8">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+          <div style="font-size:15px;font-weight:700;color:#2d3748">🤖 AI 产品分析报告</div>
+          <button onclick="_aiLoaded=false;loadAIAnalysis()"
+            style="font-size:13px;padding:6px 14px;border:1.5px solid #e2e8f0;border-radius:8px;background:white;cursor:pointer;color:#4a5568">
+            🔄 重新分析
+          </button>
+        </div>
+        <div style="font-size:14px;color:#2d3748"><p>${html}</p></div>
+      </div>
+      <div class="section" style="margin-top:16px">
+        <div style="font-size:13px;font-weight:700;color:#a0aec0;margin-bottom:12px">原始统计数据（已喂给 AI）</div>
+        <pre style="font-size:12px;color:#4a5568;white-space:pre-wrap;line-height:1.7">${data.stats}</pre>
+      </div>`;
+    _aiLoaded = true;
+  } catch(e) {
+    container.innerHTML = `<div class="section" style="color:#e53e3e;padding:32px">请求失败：${e.message}</div>`;
+  }
+}
+
+load();
+</script>
+</body>
+</html>"""
+
 SURVEY_HTML = """<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>问卷调查 · 医疗AI每日情报</title>
+<title>医疗AI前沿资讯获取习惯调研</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
@@ -3736,32 +3983,35 @@ body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif
 .header h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
 .header p { font-size: 14px; opacity: 0.85; line-height: 1.6; }
 .main { max-width: 680px; margin: 32px auto; padding: 0 20px 60px; }
-.progress-bar { background: #e2e8f0; border-radius: 6px; height: 6px; margin-bottom: 28px; }
+.progress-bar { background: #e2e8f0; border-radius: 6px; height: 6px; margin-bottom: 8px; }
 .progress-fill { background: linear-gradient(90deg, #667eea, #764ba2); height: 6px; border-radius: 6px; transition: width .4s; }
-.progress-text { font-size: 12px; color: #a0aec0; margin-top: 6px; }
+.progress-text { font-size: 12px; color: #a0aec0; margin-bottom: 24px; }
+.section-title { font-size: 13px; font-weight: 700; color: #667eea; letter-spacing: .08em;
+                 text-transform: uppercase; margin: 32px 0 16px; padding-left: 4px; }
 .card { background: white; border-radius: 14px; padding: 28px;
-        box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 20px; }
-.q-num { font-size: 12px; font-weight: 700; color: #667eea; letter-spacing: .08em; margin-bottom: 8px; }
-.q-text { font-size: 16px; font-weight: 600; color: #2d3748; line-height: 1.55; margin-bottom: 6px; }
-.q-hint { font-size: 13px; color: #718096; margin-bottom: 18px; }
-.options { display: flex; flex-direction: column; gap: 10px; }
-.opt { display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+        box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 16px; }
+.q-num { font-size: 12px; font-weight: 700; color: #a0aec0; letter-spacing: .06em; margin-bottom: 8px; }
+.q-text { font-size: 15px; font-weight: 600; color: #2d3748; line-height: 1.6; margin-bottom: 6px; }
+.q-hint { font-size: 13px; color: #718096; margin-bottom: 16px; }
+.options { display: flex; flex-direction: column; gap: 9px; }
+.opt { display: flex; align-items: flex-start; gap: 12px; padding: 11px 15px;
        border: 1.5px solid #e2e8f0; border-radius: 10px; cursor: pointer;
        transition: all .15s; user-select: none; }
 .opt:hover { border-color: #667eea; background: #f7f8ff; }
 .opt.selected { border-color: #667eea; background: #ebf4ff; }
-.opt input { accent-color: #667eea; width: 16px; height: 16px; flex-shrink: 0; }
-.opt label { font-size: 14px; color: #2d3748; cursor: pointer; flex: 1; }
+.opt input { accent-color: #667eea; width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; cursor: pointer; }
+.opt input[type="radio"] { border-radius: 50%; }
+.opt input[type="checkbox"] { border-radius: 3px; }
+.opt label { font-size: 14px; color: #2d3748; cursor: pointer; flex: 1; line-height: 1.5; }
 textarea { width: 100%; padding: 12px 14px; border: 1.5px solid #e2e8f0; border-radius: 10px;
            font-size: 14px; color: #2d3748; resize: vertical; min-height: 80px; outline: none;
            font-family: inherit; transition: border-color .15s; }
 textarea:focus { border-color: #667eea; }
 .required { color: #e53e3e; margin-left: 3px; }
 .btn-group { display: flex; gap: 12px; margin-top: 32px; }
-.btn { padding: 12px 28px; border-radius: 10px; border: none; font-size: 15px;
+.btn { padding: 13px 28px; border-radius: 10px; border: none; font-size: 15px;
        font-weight: 600; cursor: pointer; transition: opacity .15s; }
 .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); color: white; flex: 1; }
-.btn-secondary { background: #edf2f7; color: #4a5568; }
 .btn:hover { opacity: .88; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .done-page { text-align: center; padding: 60px 20px; }
@@ -3772,141 +4022,208 @@ textarea:focus { border-color: #667eea; }
 </head>
 <body>
 <div class="header">
-  <h1>📋 医疗AI论文情报工具 · 用户调研</h1>
-  <p>约 3 分钟完成 · 帮助我们做得更适合你</p>
+  <h1>📋 医疗 AI 前沿资讯获取习惯调研</h1>
+  <p>约 4 分钟完成 · 共 15 题 · 帮助我们做得更适合你</p>
 </div>
 <div class="main">
-  <div class="progress-bar">
-    <div class="progress-fill" id="progressFill" style="width:10%"></div>
-  </div>
-  <div class="progress-text" id="progressText">第 1 题，共 10 题</div>
+  <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:6%"></div></div>
+  <div class="progress-text" id="progressText">已完成 0 / 15 题</div>
 
   <div id="surveyForm">
 
-  <!-- Q1 -->
+  <!-- ── Part 1 需求痛点 ── -->
+  <div class="section-title">第一部分 · 验证需求痛点</div>
+
   <div class="card" id="q1">
-    <div class="q-num">Q1 / 10</div>
-    <div class="q-text">你平时主要通过哪种方式跟进医疗AI最新论文？<span class="required">*</span></div>
-    <div class="q-hint">可多选</div>
+    <div class="q-num">Q1 / 15</div>
+    <div class="q-text">您上一次主动去搜索或阅读医疗AI领域前沿论文，是在什么时候？<span class="required">*</span></div>
     <div class="options" id="opts_q1">
-      <div class="opt" onclick="toggleCheck(this,'q1','RSS/邮件订阅')"><input type="checkbox"><label>RSS / 邮件订阅（如 arxiv-sanity、ResearchGate）</label></div>
-      <div class="opt" onclick="toggleCheck(this,'q1','社交媒体')"><input type="checkbox"><label>Twitter/X、微博、微信公众号等社交媒体</label></div>
-      <div class="opt" onclick="toggleCheck(this,'q1','实验室内部分享')"><input type="checkbox"><label>实验室内部分享 / 组会</label></div>
-      <div class="opt" onclick="toggleCheck(this,'q1','直接搜索')"><input type="checkbox"><label>直接去 arXiv / Google Scholar 搜索</label></div>
-      <div class="opt" onclick="toggleCheck(this,'q1','别人推荐')"><input type="checkbox"><label>朋友、同学推荐</label></div>
-      <div class="opt" onclick="toggleCheck(this,'q1','几乎不主动跟进')"><input type="checkbox"><label>几乎不主动跟进，靠碰到</label></div>
+      <div class="opt" onclick="selectOpt(this,'q1','就在这两天')"><input type="radio"><label>就在这两天（日常习惯）</label></div>
+      <div class="opt" onclick="selectOpt(this,'q1','上周')"><input type="radio"><label>上周（保持较低频率的关注）</label></div>
+      <div class="opt" onclick="selectOpt(this,'q1','上个月或更久')"><input type="radio"><label>上个月，或更久以前（为了组会、写本子或赶项目）</label></div>
+      <div class="opt" onclick="selectOpt(this,'q1','几乎不主动')"><input type="radio"><label>几乎不主动看，都是别人发给我才看</label></div>
     </div>
   </div>
 
-  <!-- Q2 -->
   <div class="card" id="q2">
-    <div class="q-num">Q2 / 10</div>
-    <div class="q-text">一周内你大概会主动看几次新论文？<span class="required">*</span></div>
+    <div class="q-num">Q2 / 15</div>
+    <div class="q-text">您目前获取医疗AI最新研究成果的主要渠道是？<span class="required">*</span></div>
+    <div class="q-hint">可多选</div>
     <div class="options" id="opts_q2">
-      <div class="opt" onclick="selectOpt(this,'q2','几乎不看')"><input type="radio"><label>几乎不看，太忙了</label></div>
-      <div class="opt" onclick="selectOpt(this,'q2','1-2次')"><input type="radio"><label>1–2 次</label></div>
-      <div class="opt" onclick="selectOpt(this,'q2','3-5次')"><input type="radio"><label>3–5 次</label></div>
-      <div class="opt" onclick="selectOpt(this,'q2','每天都看')"><input type="radio"><label>每天都看</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q2','主动检索')"><input type="checkbox"><label>主动检索（Google Scholar、PubMed、arXiv 等）</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q2','社交媒体')"><input type="checkbox"><label>社交媒体与内容平台（微信公众号、小红书、Twitter 等）</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q2','学术群/熟人转发')"><input type="checkbox"><label>学术群分享 / 熟人转发</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q2','官方订阅')"><input type="checkbox"><label>官方渠道订阅（期刊邮件 Alert、行业 Newsletter）</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q2','实验室组会')"><input type="checkbox"><label>实验室内部分享 / 组会</label></div>
+      <div class="opt" onclick="toggleCheckOther(this,'q2')"><input type="checkbox"><label>其他</label></div>
     </div>
+    <input id="other_q2" type="text" placeholder="请填写其他渠道…" oninput="setOther('q2',this.value)"
+      style="display:none;margin-top:8px;width:100%;padding:10px 12px;border:1.5px solid #667eea;border-radius:8px;font-size:14px;outline:none;font-family:inherit">
   </div>
 
-  <!-- Q3 -->
   <div class="card" id="q3">
-    <div class="q-num">Q3 / 10</div>
+    <div class="q-num">Q3 / 15</div>
     <div class="q-text">你怎么判断一篇论文值不值得点开？<span class="required">*</span></div>
     <div class="q-hint">可多选</div>
     <div class="options" id="opts_q3">
-      <div class="opt" onclick="toggleCheck(this,'q3','标题吸引')"><input type="checkbox"><label>标题里有我关注的关键词</label></div>
-      <div class="opt" onclick="toggleCheck(this,'q3','期刊/会议')"><input type="checkbox"><label>发在顶刊 / 顶会（Nature、MICCAI 等）</label></div>
-      <div class="opt" onclick="toggleCheck(this,'q3','团队')"><input type="checkbox"><label>来自我知道的机构或团队</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q3','标题关键词')"><input type="checkbox"><label>标题里有我关注的关键词</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q3','顶刊顶会')"><input type="checkbox"><label>发在顶刊 / 顶会（Nature、MICCAI、NEJM AI 等）</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q3','知名团队')"><input type="checkbox"><label>来自我知道的机构或团队</label></div>
       <div class="opt" onclick="toggleCheck(this,'q3','有中文摘要')"><input type="checkbox"><label>有中文摘要帮我快速判断</label></div>
-      <div class="opt" onclick="toggleCheck(this,'q3','引用量/热度')"><input type="checkbox"><label>引用量或讨论热度高</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q3','热度/引用')"><input type="checkbox"><label>引用量或讨论热度高</label></div>
       <div class="opt" onclick="toggleCheck(this,'q3','别人推荐')"><input type="checkbox"><label>有人专门推荐给我</label></div>
     </div>
   </div>
 
-  <!-- Q4 -->
   <div class="card" id="q4">
-    <div class="q-num">Q4 / 10</div>
-    <div class="q-text">你有没有遇过"这篇论文我应该早点看到"的情况？<span class="required">*</span></div>
+    <div class="q-num">Q4 / 15</div>
+    <div class="q-text">阅读前沿论文时，您感到最耗时或最痛苦的环节是？<span class="required">*</span></div>
+    <div class="q-hint">可多选，最多选 2 项</div>
     <div class="options" id="opts_q4">
-      <div class="opt" onclick="selectOpt(this,'q4','经常有')"><input type="radio"><label>经常有，信息差很烦</label></div>
-      <div class="opt" onclick="selectOpt(this,'q4','偶尔有')"><input type="radio"><label>偶尔有</label></div>
-      <div class="opt" onclick="selectOpt(this,'q4','很少')"><input type="radio"><label>很少，现有方式基本够用</label></div>
-      <div class="opt" onclick="selectOpt(this,'q4','没感觉')"><input type="radio"><label>没这种感觉</label></div>
+      <div class="opt" onclick="toggleCheckMax(this,'q4','噪音太大',2)"><input type="checkbox"><label>噪音太大：水文太多，很难快速筛出高质量文章</label></div>
+      <div class="opt" onclick="toggleCheckMax(this,'q4','篇幅太长',2)"><input type="checkbox"><label>篇幅太长：没时间精读，抓不住核心结论</label></div>
+      <div class="opt" onclick="toggleCheckMax(this,'q4','落地困难',2)"><input type="checkbox"><label>落地困难：看不懂代码复现逻辑或实验设计</label></div>
+      <div class="opt" onclick="toggleCheckMax(this,'q4','语言障碍',2)"><input type="checkbox"><label>语言障碍：全英文阅读效率低，容易疲劳</label></div>
+      <div class="opt" onclick="toggleCheckExclusive(this,'q4','没什么痛点')"><input type="checkbox"><label>没什么特别痛点</label></div>
     </div>
   </div>
 
-  <!-- Q5 -->
   <div class="card" id="q5">
-    <div class="q-num">Q5 / 10</div>
-    <div class="q-text">你现在跟进论文的方式里，最让你烦的是？<span class="required">*</span></div>
+    <div class="q-num">Q5 / 15</div>
+    <div class="q-text">你有没有遇过"这篇论文我应该早点看到"的情况？<span class="required">*</span></div>
     <div class="options" id="opts_q5">
-      <div class="opt" onclick="selectOpt(this,'q5','太多噪音')"><input type="radio"><label>太多噪音，非相关文章占了大多数</label></div>
-      <div class="opt" onclick="selectOpt(this,'q5','要花时间主动找')"><input type="radio"><label>要自己主动去找，没人帮我筛选</label></div>
-      <div class="opt" onclick="selectOpt(this,'q5','看不懂英文摘要')"><input type="radio"><label>英文摘要看起来费劲</label></div>
-      <div class="opt" onclick="selectOpt(this,'q5','没时间看')"><input type="radio"><label>根本没时间看，堆着</label></div>
-      <div class="opt" onclick="selectOpt(this,'q5','没什么烦')"><input type="radio"><label>没什么特别烦的</label></div>
+      <div class="opt" onclick="selectOpt(this,'q5','经常有')"><input type="radio"><label>经常有，信息差很烦</label></div>
+      <div class="opt" onclick="selectOpt(this,'q5','偶尔有')"><input type="radio"><label>偶尔有</label></div>
+      <div class="opt" onclick="selectOpt(this,'q5','很少')"><input type="radio"><label>很少，现有方式基本够用</label></div>
+      <div class="opt" onclick="selectOpt(this,'q5','没感觉')"><input type="radio"><label>没这种感觉</label></div>
     </div>
   </div>
 
-  <!-- Q6 -->
+  <!-- ── Part 2 触达媒介 ── -->
+  <div class="section-title">第二部分 · 验证触达媒介</div>
+
   <div class="card" id="q6">
-    <div class="q-num">Q6 / 10</div>
-    <div class="q-text">如果每天收到一封医疗AI论文精选邮件，你会打开吗？<span class="required">*</span></div>
+    <div class="q-num">Q6 / 15</div>
+    <div class="q-text">您目前处理行业资讯类邮件订阅（Newsletter）的真实习惯是？<span class="required">*</span></div>
     <div class="options" id="opts_q6">
-      <div class="opt" onclick="selectOpt(this,'q6','肯定打开')"><input type="radio"><label>肯定打开，我就缺这个</label></div>
-      <div class="opt" onclick="selectOpt(this,'q6','看标题决定')"><input type="radio"><label>看邮件标题决定，筛选得好才打开</label></div>
-      <div class="opt" onclick="selectOpt(this,'q6','偶尔打开')"><input type="radio"><label>偶尔打开，不会每天看</label></div>
-      <div class="opt" onclick="selectOpt(this,'q6','不会打开')"><input type="radio"><label>不会，邮件太多了已经不看了</label></div>
+      <div class="opt" onclick="selectOpt(this,'q6','定期点开')"><input type="radio"><label>订阅了几个高质量的，每天/每周都会定期点开看</label></div>
+      <div class="opt" onclick="selectOpt(this,'q6','大部分吃灰')"><input type="radio"><label>订阅了不少，但大部分在邮箱里吃灰，很少点开</label></div>
+      <div class="opt" onclick="selectOpt(this,'q6','看标题才点')"><input type="radio"><label>偶尔看标题，遇到特别感兴趣的才点进去</label></div>
+      <div class="opt" onclick="selectOpt(this,'q6','从不订阅')"><input type="radio"><label>从不订阅邮件推送，更喜欢自己去网站刷</label></div>
     </div>
   </div>
 
-  <!-- Q7 -->
   <div class="card" id="q7">
-    <div class="q-num">Q7 / 10</div>
-    <div class="q-text">你更希望每日推送是哪种形式？<span class="required">*</span></div>
+    <div class="q-num">Q7 / 15</div>
+    <div class="q-text">假设有一份提炼好的每日"医疗AI前沿速递"，您在什么场景下最有可能点开？<span class="required">*</span></div>
     <div class="options" id="opts_q7">
-      <div class="opt" onclick="selectOpt(this,'q7','快速扫一眼')"><input type="radio"><label>快速扫一眼今天有什么（标题 + 一句话）</label></div>
-      <div class="opt" onclick="selectOpt(this,'q7','精读一篇')"><input type="radio"><label>每天精推 1 篇，帮我读完说结论</label></div>
-      <div class="opt" onclick="selectOpt(this,'q7','分类列表')"><input type="radio"><label>按分类列表（影像、NLP、可穿戴等）</label></div>
-      <div class="opt" onclick="selectOpt(this,'q7','都行')"><input type="radio"><label>都可以，只要筛得准</label></div>
+      <div class="opt" onclick="selectOpt(this,'q7','早上通勤/吃饭')"><input type="radio"><label>早上通勤或吃早餐时，在手机上快速浏览</label></div>
+      <div class="opt" onclick="selectOpt(this,'q7','到工位打开电脑')"><input type="radio"><label>刚到实验室/工位，打开电脑邮箱顺手处理</label></div>
+      <div class="opt" onclick="selectOpt(this,'q7','晚上睡前')"><input type="radio"><label>晚上睡觉前，碎片化时间补充</label></div>
+      <div class="opt" onclick="selectOpt(this,'q7','有需求才搜')"><input type="radio"><label>只有手头卡在技术/科研难点时才去专门搜索</label></div>
     </div>
   </div>
 
-  <!-- Q8 -->
   <div class="card" id="q8">
-    <div class="q-num">Q8 / 10</div>
+    <div class="q-num">Q8 / 15</div>
+    <div class="q-text">如果这个工具足够好用，你更愿意用哪种方式接收？<span class="required">*</span></div>
+    <div class="options" id="opts_q8">
+      <div class="opt" onclick="selectOpt(this,'q8','邮件')"><input type="radio"><label>邮件（每天定时发）</label></div>
+      <div class="opt" onclick="selectOpt(this,'q8','微信公众号')"><input type="radio"><label>微信公众号推文</label></div>
+      <div class="opt" onclick="selectOpt(this,'q8','网页自己去看')"><input type="radio"><label>网页，我自己去刷</label></div>
+      <div class="opt" onclick="selectOpt(this,'q8','微信群/飞书群')"><input type="radio"><label>发到微信群 / 飞书群</label></div>
+      <div class="opt" onclick="selectOptOther(this,'q8')"><input type="radio"><label>其他</label></div>
+    </div>
+    <input id="other_q8" type="text" placeholder="请填写其他接收方式…" oninput="setOther('q8',this.value)"
+      style="display:none;margin-top:8px;width:100%;padding:10px 12px;border:1.5px solid #667eea;border-radius:8px;font-size:14px;outline:none;font-family:inherit">
+  </div>
+
+  <!-- ── Part 3 收藏与留存 ── -->
+  <div class="section-title">第三部分 · 验证收藏功能与留存</div>
+
+  <div class="card" id="q9">
+    <div class="q-num">Q9 / 15</div>
+    <div class="q-text">当您刷到一篇有价值的论文但当下没时间细看，您通常怎么做？<span class="required">*</span></div>
+    <div class="options" id="opts_q9">
+      <div class="opt" onclick="selectOpt(this,'q9','下载PDF')"><input type="radio"><label>下载 PDF 到本地文件夹</label></div>
+      <div class="opt" onclick="selectOpt(this,'q9','文献管理软件')"><input type="radio"><label>导入文献管理软件（Zotero、EndNote 等）</label></div>
+      <div class="opt" onclick="selectOpt(this,'q9','微信收藏/书签')"><input type="radio"><label>转发到"微信文件传输助手"或收藏在浏览器书签</label></div>
+      <div class="opt" onclick="selectOpt(this,'q9','标签页堆着')"><input type="radio"><label>页面先开着不关，直到浏览器标签堆满或重启</label></div>
+    </div>
+  </div>
+
+  <div class="card" id="q10">
+    <div class="q-num">Q10 / 15</div>
+    <div class="q-text">回想上个月"收藏/下载"的那些未读论文，后来的结局通常是？<span class="required">*</span></div>
+    <div class="options" id="opts_q10">
+      <div class="opt" onclick="selectOpt(this,'q10','周末统一清理')"><input type="radio"><label>周末或空闲时间会统一清理、认真读完</label></div>
+      <div class="opt" onclick="selectOpt(this,'q10','需要才翻')"><input type="radio"><label>只有写论文/做项目急需引用时才翻出来</label></div>
+      <div class="opt" onclick="selectOpt(this,'q10','几乎没再打开')"><input type="radio"><label>几乎再也没打开过（"收藏了就等于学过了"）</label></div>
+      <div class="opt" onclick="selectOpt(this,'q10','忘了存哪')"><input type="radio"><label>早就忘了存哪了，需要时直接重新搜</label></div>
+    </div>
+  </div>
+
+  <div class="card" id="q11">
+    <div class="q-num">Q11 / 15</div>
+    <div class="q-text">如果设计一个"收藏库"，哪个辅助功能最能吸引你重新打开那些存下来的论文？<span class="required">*</span></div>
+    <div class="options" id="opts_q11">
+      <div class="opt" onclick="selectOpt(this,'q11','数据集/代码链接')"><input type="radio"><label>自动提取论文的数据集来源或开源代码链接</label></div>
+      <div class="opt" onclick="selectOpt(this,'q11','一句话方法论')"><input type="radio"><label>提供一句话的"核心方法论/Prompt"总结</label></div>
+      <div class="opt" onclick="selectOpt(this,'q11','智能提醒')"><input type="radio"><label>根据我的研究方向，提醒"这篇你存的论文刚好能解决你的问题"</label></div>
+      <div class="opt" onclick="selectOpt(this,'q11','机制图解')"><input type="radio"><label>提供清晰的临床试验逻辑或机制图解</label></div>
+      <div class="opt" onclick="selectOptOther(this,'q11')"><input type="radio"><label>其他</label></div>
+    </div>
+    <input id="other_q11" type="text" placeholder="请填写其他功能需求…" oninput="setOther('q11',this.value)"
+      style="display:none;margin-top:8px;width:100%;padding:10px 12px;border:1.5px solid #667eea;border-radius:8px;font-size:14px;outline:none;font-family:inherit">
+  </div>
+
+  <!-- ── Part 4 功能与画像 ── -->
+  <div class="section-title">第四部分 · 功能优先级与用户画像</div>
+
+  <div class="card" id="q12">
+    <div class="q-num">Q12 / 15</div>
     <div class="q-text">以下哪个功能对你最有价值？<span class="required">*</span></div>
     <div class="q-hint">可多选，最多选 3 个</div>
-    <div class="options" id="opts_q8">
-      <div class="opt" onclick="toggleCheck(this,'q8','中文标题翻译')"><input type="checkbox"><label>英文标题自动翻译成中文</label></div>
-      <div class="opt" onclick="toggleCheck(this,'q8','AI中文摘要')"><input type="checkbox"><label>AI 生成中文摘要（100字以内）</label></div>
-      <div class="opt" onclick="toggleCheck(this,'q8','按领域筛选')"><input type="checkbox"><label>按我关注的领域（影像、NLP…）精准筛选</label></div>
-      <div class="opt" onclick="toggleCheck(this,'q8','收藏夹')"><input type="checkbox"><label>收藏感兴趣的论文，方便以后找</label></div>
-      <div class="opt" onclick="toggleCheck(this,'q8','行业动态')"><input type="checkbox"><label>同时推送行业融资/产品动态（非仅学术）</label></div>
-      <div class="opt" onclick="toggleCheck(this,'q8','小红书热点')"><input type="checkbox"><label>附带同话题小红书热门讨论</label></div>
+    <div class="options" id="opts_q12">
+      <div class="opt" onclick="toggleCheck(this,'q12','中文标题翻译')"><input type="checkbox"><label>英文标题自动翻译成中文</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q12','AI中文摘要')"><input type="checkbox"><label>AI 生成中文摘要（100字以内）</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q12','按领域筛选')"><input type="checkbox"><label>按我关注的领域（影像、NLP…）精准筛选</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q12','收藏夹')"><input type="checkbox"><label>收藏感兴趣的论文，方便以后找</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q12','行业动态')"><input type="checkbox"><label>同时推送行业融资/产品动态（非仅学术）</label></div>
+      <div class="opt" onclick="toggleCheck(this,'q12','小红书热点')"><input type="checkbox"><label>附带同话题小红书热门讨论</label></div>
     </div>
   </div>
 
-  <!-- Q9 -->
-  <div class="card" id="q9">
-    <div class="q-num">Q9 / 10</div>
-    <div class="q-text">如果这个工具足够好用，你更愿意用哪种方式接收？<span class="required">*</span></div>
-    <div class="options" id="opts_q9">
-      <div class="opt" onclick="selectOpt(this,'q9','邮件')"><input type="radio"><label>邮件（每天定时发）</label></div>
-      <div class="opt" onclick="selectOpt(this,'q9','微信公众号')"><input type="radio"><label>微信公众号推文</label></div>
-      <div class="opt" onclick="selectOpt(this,'q9','网页自己去看')"><input type="radio"><label>网页，我自己去刷</label></div>
-      <div class="opt" onclick="selectOpt(this,'q9','微信群')"><input type="radio"><label>发到微信群 / 飞书群</label></div>
+  <div class="card" id="q13">
+    <div class="q-num">Q13 / 15</div>
+    <div class="q-text">你更希望每日推送是哪种形式？<span class="required">*</span></div>
+    <div class="options" id="opts_q13">
+      <div class="opt" onclick="selectOpt(this,'q13','快速扫一眼')"><input type="radio"><label>快速扫一眼今天有什么（标题 + 一句话）</label></div>
+      <div class="opt" onclick="selectOpt(this,'q13','精读一篇')"><input type="radio"><label>每天精推 1 篇，帮我读完说结论</label></div>
+      <div class="opt" onclick="selectOpt(this,'q13','分类列表')"><input type="radio"><label>按分类列表（影像、NLP、可穿戴等）</label></div>
+      <div class="opt" onclick="selectOpt(this,'q13','都行')"><input type="radio"><label>都可以，只要筛得准</label></div>
     </div>
   </div>
 
-  <!-- Q10 -->
-  <div class="card" id="q10">
-    <div class="q-num">Q10 / 10</div>
+  <div class="card" id="q14">
+    <div class="q-num">Q14 / 15</div>
+    <div class="q-text">您目前主要关注的身份/方向更偏向于？<span class="required">*</span></div>
+    <div class="options" id="opts_q14">
+      <div class="opt" onclick="selectOpt(this,'q14','临床医生/医学生')"><input type="radio"><label>临床医生 / 医学生（偏向应用与临床价值）</label></div>
+      <div class="opt" onclick="selectOpt(this,'q14','基础科研')"><input type="radio"><label>生物/医学基础科研人员（偏向机制与实验设计）</label></div>
+      <div class="opt" onclick="selectOpt(this,'q14','AI工程师/产品')"><input type="radio"><label>AI 产品经理 / 算法工程师 / 开发者（偏向架构与商业落地）</label></div>
+      <div class="opt" onclick="selectOpt(this,'q14','行业爱好者')"><input type="radio"><label>行业爱好者 / 投资人</label></div>
+      <div class="opt" onclick="selectOptOther(this,'q14')"><input type="radio"><label>其他</label></div>
+    </div>
+    <input id="other_q14" type="text" placeholder="请填写你的身份…" oninput="setOther('q14',this.value)"
+      style="display:none;margin-top:8px;width:100%;padding:10px 12px;border:1.5px solid #667eea;border-radius:8px;font-size:14px;outline:none;font-family:inherit">
+  </div>
+
+  <div class="card" id="q15">
+    <div class="q-num">Q15 / 15</div>
     <div class="q-text">如果让你改一个地方，让你愿意推荐给同学用，你会改什么？</div>
     <div class="q-hint">随便说，哪怕一句话（选填）</div>
-    <textarea id="ans_q10" placeholder="比如：摘要太长了、分类不够准、想要更多临床方向的论文…" oninput="updateProgress()"></textarea>
+    <textarea id="ans_q15" placeholder="比如：摘要太长了、分类不够准、想要更多临床方向的论文…" oninput="updateProgress()"></textarea>
   </div>
 
   <!-- 联系方式 -->
@@ -3925,7 +4242,6 @@ textarea:focus { border-color: #667eea; }
 
   </div><!-- end surveyForm -->
 
-  <!-- 完成页 -->
   <div id="donePage" class="card done-page" style="display:none">
     <div class="emoji">🎉</div>
     <h2>感谢你的反馈！</h2>
@@ -3936,12 +4252,85 @@ textarea:focus { border-color: #667eea; }
 
 <script>
 const answers = {};
+const REQUIRED = ['q1','q2','q3','q4','q5','q6','q7','q8','q9','q10','q11','q12','q13','q14'];
 
 function selectOpt(el, qid, val) {
-  document.querySelectorAll('#opts_' + qid + ' .opt').forEach(o => o.classList.remove('selected'));
-  el.classList.add('selected');
-  el.querySelector('input').checked = true;
-  answers[qid] = val;
+  const already = el.classList.contains('selected');
+  document.querySelectorAll('#opts_' + qid + ' .opt').forEach(o => {
+    o.classList.remove('selected');
+    o.querySelector('input').checked = false;
+  });
+  const otherInput = document.getElementById('other_' + qid);
+  if (otherInput) otherInput.style.display = 'none';
+  if (already) {
+    // 再次点击已选项 → 取消
+    delete answers[qid];
+  } else {
+    el.classList.add('selected');
+    el.querySelector('input').checked = true;
+    answers[qid] = val;
+  }
+  updateProgress();
+}
+
+function selectOptOther(el, qid) {
+  const already = el.classList.contains('selected');
+  document.querySelectorAll('#opts_' + qid + ' .opt').forEach(o => {
+    o.classList.remove('selected');
+    o.querySelector('input').checked = false;
+  });
+  const otherInput = document.getElementById('other_' + qid);
+  if (already) {
+    if (otherInput) otherInput.style.display = 'none';
+    delete answers[qid];
+  } else {
+    el.classList.add('selected');
+    el.querySelector('input').checked = true;
+    if (otherInput) { otherInput.style.display = 'block'; otherInput.focus(); }
+    answers[qid] = otherInput ? ('其他：' + otherInput.value) : '其他';
+  }
+  updateProgress();
+}
+
+function toggleCheckMax(el, qid, val, max) {
+  // 排他：如果"没什么痛点"已选，先取消它
+  const excl = document.querySelector('#opts_' + qid + ' .opt.exclusive');
+  if (excl && excl.classList.contains('selected')) {
+    excl.classList.remove('selected');
+    excl.querySelector('input').checked = false;
+    answers[qid] = (answers[qid] || []).filter(v => v !== excl.dataset.val);
+  }
+  const alreadySelected = (answers[qid] || []).filter(v => v !== val);
+  if (!el.classList.contains('selected') && alreadySelected.length >= max) {
+    // 已达上限，不允许再选，轻微抖动提示
+    el.style.outline = '2px solid #e53e3e';
+    setTimeout(() => el.style.outline = '', 600);
+    return;
+  }
+  el.classList.toggle('selected');
+  el.querySelector('input').checked = el.classList.contains('selected');
+  if (!answers[qid]) answers[qid] = [];
+  if (el.classList.contains('selected')) {
+    if (!answers[qid].includes(val)) answers[qid].push(val);
+  } else {
+    answers[qid] = answers[qid].filter(v => v !== val);
+  }
+  updateProgress();
+}
+
+function toggleCheckExclusive(el, qid, val) {
+  // 排他选项：选中后清除所有其他选项
+  const wasSelected = el.classList.contains('selected');
+  document.querySelectorAll('#opts_' + qid + ' .opt').forEach(o => {
+    o.classList.remove('selected');
+    o.querySelector('input').checked = false;
+  });
+  answers[qid] = [];
+  if (!wasSelected) {
+    el.classList.add('selected');
+    el.querySelector('input').checked = true;
+    answers[qid] = [val];
+  }
   updateProgress();
 }
 
@@ -3957,33 +4346,57 @@ function toggleCheck(el, qid, val) {
   updateProgress();
 }
 
+function toggleCheckOther(el, qid) {
+  el.classList.toggle('selected');
+  el.querySelector('input').checked = el.classList.contains('selected');
+  const otherInput = document.getElementById('other_' + qid);
+  if (!answers[qid]) answers[qid] = [];
+  if (el.classList.contains('selected')) {
+    otherInput.style.display = 'block'; otherInput.focus();
+    const v = '其他：' + otherInput.value;
+    if (!answers[qid].includes(v)) answers[qid].push(v);
+  } else {
+    otherInput.style.display = 'none';
+    answers[qid] = answers[qid].filter(v => !v.startsWith('其他'));
+  }
+  updateProgress();
+}
+
+function setOther(qid, val) {
+  const label = '其他：' + val;
+  if (Array.isArray(answers[qid])) {
+    answers[qid] = answers[qid].filter(v => !v.startsWith('其他'));
+    if (val.trim()) answers[qid].push(label);
+  } else {
+    answers[qid] = label;
+  }
+  updateProgress();
+}
+
 function updateProgress() {
-  const required = ['q1','q2','q3','q4','q5','q6','q7','q8','q9'];
-  const answered = required.filter(q => answers[q] && (Array.isArray(answers[q]) ? answers[q].length > 0 : true)).length;
-  const pct = Math.round((answered / required.length) * 90) + 10;
+  const answered = REQUIRED.filter(q => answers[q] && (Array.isArray(answers[q]) ? answers[q].length > 0 : true)).length;
+  const pct = Math.round((answered / REQUIRED.length) * 94) + 6;
   document.getElementById('progressFill').style.width = pct + '%';
-  document.getElementById('progressText').textContent = `已完成 ${answered} / ${required.length} 题`;
+  document.getElementById('progressText').textContent = `已完成 ${answered} / ${REQUIRED.length} 题`;
 }
 
 async function submitSurvey() {
-  const required = ['q1','q2','q3','q4','q5','q6','q7','q8','q9'];
-  const missing = required.filter(q => !answers[q] || (Array.isArray(answers[q]) && answers[q].length === 0));
+  const missing = REQUIRED.filter(q => !answers[q] || (Array.isArray(answers[q]) && answers[q].length === 0));
   if (missing.length > 0) {
-    const firstMissing = document.getElementById(missing[0]);
-    firstMissing.scrollIntoView({behavior:'smooth', block:'center'});
-    firstMissing.style.border = '2px solid #e53e3e';
-    setTimeout(() => firstMissing.style.border = '', 2000);
+    const el = document.getElementById(missing[0]);
+    el.scrollIntoView({behavior:'smooth', block:'center'});
+    el.style.outline = '2px solid #e53e3e';
+    setTimeout(() => el.style.outline = '', 2000);
     alert('请完成所有必填题（标 * 的题目）');
     return;
   }
-  answers['q10'] = document.getElementById('ans_q10').value.trim();
+  answers['q15_open'] = document.getElementById('ans_q15').value.trim();
   answers['email'] = document.getElementById('contact_email').value.trim();
   const btn = document.getElementById('submitBtn');
   btn.disabled = true; btn.textContent = '提交中…';
   try {
     await fetch('/api/survey/submit', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(answers)
     });
     document.getElementById('surveyForm').style.display = 'none';
@@ -4111,19 +4524,137 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
 
-        elif self.path == "/api/survey/submit":
-            length = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(length) or b"{}")
+        elif path == "/survey/results":
+            user = _get_session(self)
+            ADMIN_EMAILS = ['2471149840@qq.com', 'zhengwenxin79@gmail.com']
+            if not user or user["email"] not in ADMIN_EMAILS:
+                self.send_response(302)
+                self.send_header("Location", "/survey")
+                self.end_headers()
+                return
+            body = SURVEY_RESULTS_HTML.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", len(body))
+            self.end_headers()
+            self.wfile.write(body)
+
+        elif path == "/api/survey/results":
+            user = _get_session(self)
+            ADMIN_EMAILS = ['2471149840@qq.com', 'zhengwenxin79@gmail.com']
+            if not user or user["email"] not in ADMIN_EMAILS:
+                self.send_json({"ok": False, "msg": "无权限"}, 403)
+                return
             conn = get_conn(DB_PATH)
             try:
-                conn.execute(
-                    "CREATE TABLE IF NOT EXISTS survey_responses (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, submitted_at TEXT DEFAULT (datetime('now')))"
-                )
-                conn.execute("INSERT INTO survey_responses (data) VALUES (?)", (json.dumps(body, ensure_ascii=False),))
-                conn.commit()
+                conn.execute("CREATE TABLE IF NOT EXISTS survey_responses (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, submitted_at TEXT DEFAULT (datetime('now')))")
+                rows = conn.execute("SELECT id, data, submitted_at FROM survey_responses ORDER BY submitted_at DESC").fetchall()
             finally:
                 conn.close()
-            self.send_json({"ok": True})
+            responses = []
+            for r in rows:
+                try:
+                    d = json.loads(r["data"])
+                    d["_id"] = r["id"]
+                    d["_submitted_at"] = r["submitted_at"]
+                    responses.append(d)
+                except Exception:
+                    pass
+            self.send_json({"ok": True, "total": len(responses), "responses": responses})
+
+        elif path == "/api/survey/analyze":
+            user = _get_session(self)
+            ADMIN_EMAILS = ['2471149840@qq.com', 'zhengwenxin79@gmail.com']
+            if not user or user["email"] not in ADMIN_EMAILS:
+                self.send_json({"ok": False, "msg": "无权限"}, 403)
+                return
+            conn = get_conn(DB_PATH)
+            try:
+                rows = conn.execute("SELECT data FROM survey_responses").fetchall()
+            finally:
+                conn.close()
+            responses = []
+            for r in rows:
+                try:
+                    responses.append(json.loads(r["data"]))
+                except Exception:
+                    pass
+            if not responses:
+                self.send_json({"ok": False, "msg": "暂无数据"})
+                return
+
+            Q_LABELS = {
+                "q1": "上次主动看论文",
+                "q2": "获取渠道（多选）",
+                "q3": "判断是否点开的标准（多选）",
+                "q4": "最痛苦的环节（多选，最多2项）",
+                "q5": "信息差经历",
+                "q6": "邮件订阅真实习惯",
+                "q7": "最可能打开的场景",
+                "q8": "偏好接收方式",
+                "q9": "看到好论文当下的动作",
+                "q10": "收藏论文的结局",
+                "q11": "收藏库最吸引你的功能",
+                "q12": "最有价值的功能（多选）",
+                "q13": "偏好推送形式",
+                "q14": "用户身份/方向",
+            }
+            total = len(responses)
+
+            # 构建聚合统计
+            stats_text = f"共 {total} 份有效问卷\n\n"
+            for qid, label in Q_LABELS.items():
+                counts = {}
+                for r in responses:
+                    val = r.get(qid)
+                    if not val:
+                        continue
+                    vals = val if isinstance(val, list) else [val]
+                    for v in vals:
+                        counts[v] = counts.get(v, 0) + 1
+                if not counts:
+                    continue
+                stats_text += f"【{label}】\n"
+                for v, c in sorted(counts.items(), key=lambda x: -x[1]):
+                    pct = round(c / total * 100)
+                    stats_text += f"  · {v}：{c}人 ({pct}%)\n"
+                stats_text += "\n"
+
+            # 收集开放回答
+            open_answers = [r.get("q15_open", "").strip() for r in responses if r.get("q15_open", "").strip()]
+            if open_answers:
+                stats_text += "【用户改进建议（原文）】\n"
+                for i, a in enumerate(open_answers, 1):
+                    stats_text += f"  {i}. {a}\n"
+
+            prompt = f"""你是一位产品分析专家。以下是一份"医疗AI每日论文情报工具"的用户调研数据（问卷结果聚合统计）：
+
+{stats_text}
+
+请基于以上数据，给出结构化的产品分析报告，包含以下几个部分：
+
+1. **核心用户画像**（2-3句话，概括典型用户是谁、现状如何）
+2. **最强烈的痛点**（找出数据中最突出的1-2个痛点，结合具体数字说明）
+3. **渠道验证**（邮件这个触达方式是否被用户接受？数据说明了什么）
+4. **功能优先级建议**（基于用户选择，列出应该优先做的3个功能，每条附理由）
+5. **产品方向风险**（有没有什么数据信号提示你要警惕的问题）
+6. **下一步行动建议**（最具体可执行的1-2件事）
+
+语言简洁直接，每条结论必须有数据支撑，不要泛泛而谈。"""
+
+            try:
+                from openai import OpenAI
+                client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+                resp = client.chat.completions.create(
+                    model="deepseek-chat",
+                    timeout=60,
+                    max_tokens=2000,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                analysis = resp.choices[0].message.content.strip()
+                self.send_json({"ok": True, "analysis": analysis, "stats": stats_text})
+            except Exception as e:
+                self.send_json({"ok": False, "msg": str(e)})
 
         elif path == "/api/auth/me":
             user = _get_session(self)
@@ -4209,6 +4740,7 @@ class Handler(BaseHTTPRequestHandler):
             sub = next((s for s in subs if s["email"] == user["email"]), None)
             if sub:
                 self.send_json({"subscribed": True, "keywords": sub["keywords"],
+                                "research_direction": sub.get("research_direction") or "",
                                 "last_sent_at": sub.get("last_sent_at") or ""})
             else:
                 self.send_json({"subscribed": False})
@@ -4247,7 +4779,23 @@ class Handler(BaseHTTPRequestHandler):
         return user
 
     def do_POST(self):
-        if self.path == "/api/auth/register":
+        if self.path == "/api/survey/submit":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            conn = get_conn(DB_PATH)
+            try:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS survey_responses (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, submitted_at TEXT DEFAULT (datetime('now')))"
+                )
+                from datetime import datetime, timezone, timedelta
+                cst = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
+                conn.execute("INSERT INTO survey_responses (data, submitted_at) VALUES (?, ?)", (json.dumps(body, ensure_ascii=False), cst))
+                conn.commit()
+            finally:
+                conn.close()
+            self.send_json({"ok": True})
+
+        elif self.path == "/api/auth/register":
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
             email = body.get("email", "").strip().lower()
@@ -4517,15 +5065,20 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
             keywords = body.get("keywords", "").strip()
+            research_direction = body.get("research_direction", "").strip()
             if not keywords:
                 self.send_json({"ok": False, "msg": "关键词不能为空"}, 400); return
             from db import add_subscription, update_subscription, get_active_subscriptions
             subs = get_active_subscriptions(DB_PATH)
             existing = next((s for s in subs if s["email"] == user["email"]), None)
             if existing:
-                result = update_subscription(user["email"], keywords, db_path=DB_PATH)
+                result = update_subscription(user["email"], keywords,
+                                             research_direction=research_direction or None,
+                                             db_path=DB_PATH)
             else:
-                result = add_subscription(user["email"], keywords, db_path=DB_PATH)
+                result = add_subscription(user["email"], keywords,
+                                          research_direction=research_direction,
+                                          db_path=DB_PATH)
             self.send_json(result)
 
         elif self.path == "/api/subscribe/cancel/me":
