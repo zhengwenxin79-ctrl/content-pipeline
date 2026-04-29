@@ -1235,6 +1235,50 @@ def is_english(text: str) -> bool:
     return chinese < len(text) * 0.2
 
 
+def generate_ai_summaries_and_cache(articles: list) -> None:
+    """为没有 ai_summary 的文章批量生成一句话总结并缓存到数据库"""
+    need = [a for a in articles if not a.get("ai_summary")]
+    if not need or not DEEPSEEK_API_KEY:
+        return
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+        articles_text = "\n\n".join([
+            "ID:{} 标题:{}\n内容:{}".format(a['id'], a['title'], (a.get('_raw_content') or '')[:400])
+            for a in need
+        ])
+        prompt = (
+            "你是医疗AI领域的科研助手。请为以下论文/文章各写一句话核心总结，要求：\n"
+            "1. 40字以内\n"
+            "2. 格式：[做了什么] + [关键结论或数字]\n"
+            "3. 直接说结论，不要用本文、研究者等开头\n"
+            "4. 举例：提出基于Transformer的ECG分类模型，在MIT-BIH数据集上F1达97.3%，超越现有方法4%\n\n"
+            '只输出JSON，格式：{"summaries": [{"id": 1, "summary": "一句话总结"}]}\n\n'
+            "文章列表：\n" + articles_text
+        )
+        resp = client.chat.completions.create(
+            model="deepseek-chat", timeout=60, max_tokens=1000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        text = resp.choices[0].message.content.strip()
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        import json as _json
+        result = _json.loads(text)
+        summary_map = {s["id"]: s["summary"] for s in result.get("summaries", [])}
+        conn = get_conn(DB_PATH)
+        try:
+            for a in need:
+                s = summary_map.get(a["id"], "")
+                if s:
+                    a["ai_summary"] = s
+                    conn.execute("UPDATE articles SET ai_summary=? WHERE id=?", (s, a["id"]))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
 def translate_titles(articles: list) -> dict:
     """
     批量翻译，返回 {id: 中文翻译} 字典
@@ -1317,7 +1361,7 @@ def get_digest_data(days=2):
     conn = get_conn(DB_PATH)
     rows = conn.execute("""
         SELECT id, title, content, source, source_name, url, category, quality_score,
-               published_at, fetched_at
+               published_at, fetched_at, COALESCE(ai_summary,'') as ai_summary
         FROM articles
         WHERE fetched_at >= datetime('now', ?)
           AND quality_score >= 5.5
@@ -1332,24 +1376,31 @@ def get_digest_data(days=2):
     result = {"顶刊论文": [], "大组动态": [], "商业落地": [], "开源项目": [], "未分类": []}
     all_articles = []
     for r in rows:
-        # 优先用发布时间，没有就用抓取时间
         date_str = r["published_at"] or r["fetched_at"] or ""
         date_display = date_str[:10] if date_str else ""
-
         cat = r["category"] if r["category"] in result else "未分类"
         article = {
             "id": r["id"],
             "title": r["title"],
-            "summary": (r["content"] or "")[:120],
+            "summary": r["ai_summary"] or "",
+            "_raw_content": r["content"] or "",
+            "ai_summary": r["ai_summary"] or "",
             "source": r["source_name"],
             "source_type": r["source"],
             "url": r["url"] or "",
             "score": r["quality_score"],
             "date": date_display,
-            "title_zh": "",  # 待填充
+            "title_zh": "",
         }
         result[cat].append(article)
         all_articles.append(article)
+
+    # 批量生成并缓存 AI 一句话总结（只对没有缓存的文章生成）
+    generate_ai_summaries_and_cache(all_articles)
+    # 生成后同步到 summary 字段供前端使用
+    for a in all_articles:
+        if a.get("ai_summary") and not a.get("summary"):
+            a["summary"] = a["ai_summary"]
 
     # 批量翻译英文标题
     translations = translate_titles(all_articles)
