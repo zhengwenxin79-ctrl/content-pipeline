@@ -1379,12 +1379,12 @@ def get_digest_data(days=2):
         date_str = r["published_at"] or r["fetched_at"] or ""
         date_display = date_str[:10] if date_str else ""
         cat = r["category"] if r["category"] in result else "未分类"
+        raw_content = r["content"] or ""
         article = {
             "id": r["id"],
             "title": r["title"],
             "summary": r["ai_summary"] or "",
-            "_raw_content": r["content"] or "",
-            "ai_summary": r["ai_summary"] or "",
+            "_raw_content": raw_content,  # 仅内存中用于生成摘要，序列化前删除
             "source": r["source_name"],
             "source_type": r["source"],
             "url": r["url"] or "",
@@ -1416,6 +1416,12 @@ def get_digest_data(days=2):
         for a in cat_list:
             if a["id"] in translations:
                 a["title_zh"] = translations[a["id"]]
+
+    # 清理内部字段，不发给前端
+    for cat_list in result.values():
+        if isinstance(cat_list, list):
+            for a in cat_list:
+                a.pop("_raw_content", None)
 
     result["_generating_summaries"] = generating_summaries
     result["_need_summary_count"] = len(need_summary)
@@ -1787,7 +1793,7 @@ HTML = """<!DOCTYPE html>
     </div>
     <div class="stats-row" id="statsRow"></div>
     <div id="logBox" class="log-box"></div>
-    <div id="content"></div>
+    <div id="content"><div class="empty"><div style="font-size:36px">⏳</div><p>请稍等，今日情报正在加载…</p></div></div>
     <div id="recSection" class="rec-section" style="display:none">
       <div class="rec-section-title">✍️ 今日写作推荐</div>
       <div id="recEditorNote" class="rec-editor-note"></div>
@@ -2104,6 +2110,9 @@ let _currentUser = null;
 let _summaryPollTimer = null;
 
 async function loadData() {
+  try {
+  document.getElementById('content').innerHTML =
+    '<div class="empty"><div style="font-size:36px">⏳</div><p>请稍等，今日情报正在加载…</p></div>';
   const res = await fetch('/api/digest');
   const data = await res.json();
   renderStats(data.stats);
@@ -2126,6 +2135,11 @@ async function loadData() {
   } else {
     if (banner) banner.style.display = 'none';
     if (_summaryPollTimer) { clearTimeout(_summaryPollTimer); _summaryPollTimer = null; }
+  }
+  } catch(e) {
+    console.error('loadData error:', e);
+    document.getElementById('content').innerHTML =
+      `<div class="empty"><p style="color:#e53e3e">数据加载失败：${e.message}</p></div>`;
   }
 }
 
@@ -2196,9 +2210,10 @@ function renderDigest(digest) {
     html += `</div></div>`;
   }
   if (!hasAny) {
+    const isAdmin = _currentUser && _currentUser.is_admin;
     html = `<div class="empty">
       <div style="font-size:48px">📭</div>
-      <p>暂无今日情报，点击「一键更新情报」开始抓取</p>
+      <p>今日情报暂未更新，每天 07:00 自动推送${isAdmin ? '，或点击「一键更新情报」立即抓取' : '，请稍后再来'}</p>
     </div>`;
   }
   document.getElementById('content').innerHTML = html;
@@ -2763,14 +2778,14 @@ async function toggleDeepAnalysis(id) {
       return;
     }
     // 将 emoji 段落渲染为卡片
-    const sections = data.analysis.split(/\n(?=[🔬⚡📊🗄💻💡⚠])/u).filter(s => s.trim());
+    const sections = data.analysis.split(/\\n(?=[🔬⚡📊🗄💻💡⚠])/u).filter(s => s.trim());
     const sectionColors = {'🔬':'#ebf8ff','⚡':'#fefcbf','📊':'#f0fff4','🗄':'#faf5ff','💻':'#e6fffa','💡':'#fffaf0','⚠':'#fff5f5'};
     const html = sections.map(s => {
       const emoji = [...s][0];
       const color = sectionColors[emoji] || '#f7fafc';
-      const lines = s.trim().split('\n');
+      const lines = s.trim().split('\\n');
       const title = lines[0];
-      const body = lines.slice(1).join('\n').trim();
+      const body = lines.slice(1).join('\\n').trim();
       return `<div style="background:${color};border-radius:8px;padding:12px 14px;margin-bottom:8px">
         <div style="font-size:13px;font-weight:600;color:#2d3748;margin-bottom:${body?'6px':'0'}">${title}</div>
         ${body ? `<div style="font-size:13px;color:#4a5568;line-height:1.7;white-space:pre-line">${body}</div>` : ''}
