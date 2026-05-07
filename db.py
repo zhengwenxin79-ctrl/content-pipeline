@@ -171,6 +171,19 @@ def init_db(db_path: str = "corpus/corpus.db"):
             created_at  TEXT DEFAULT (datetime('now')),
             used_count  INTEGER DEFAULT 0
         )""",
+        """CREATE TABLE IF NOT EXISTS article_animations (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            article_id      INTEGER NOT NULL,
+            image_index     INTEGER DEFAULT 0,
+            image_hash      TEXT NOT NULL,
+            graph_json      TEXT,
+            animation_html  TEXT,
+            status          TEXT DEFAULT 'pending',
+            error_msg       TEXT,
+            created_at      TEXT DEFAULT (datetime('now')),
+            UNIQUE(article_id, image_hash)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_animations_article ON article_animations(article_id)",
     ]
     for sql in migrations:
         try:
@@ -703,5 +716,74 @@ def list_invite_tokens(created_by: str, db_path: str = "corpus/corpus.db") -> li
             (created_by,)
         ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# ── article_animations ────────────────────────────────
+
+def save_animation(article_id: int, image_index: int, image_hash: str,
+                   graph_json: dict, animation_html: str,
+                   status: str, error_msg: str = None,
+                   db_path: str = "corpus/corpus.db") -> int:
+    """插入或更新一条动画记录，返回 row id。"""
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("""
+            INSERT INTO article_animations
+                (article_id, image_index, image_hash, graph_json, animation_html, status, error_msg)
+            VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(article_id, image_hash) DO UPDATE SET
+                graph_json=excluded.graph_json,
+                animation_html=excluded.animation_html,
+                status=excluded.status,
+                error_msg=excluded.error_msg,
+                created_at=datetime('now')
+        """, (
+            article_id, image_index, image_hash,
+            json.dumps(graph_json or {}, ensure_ascii=False),
+            animation_html, status, error_msg,
+        ))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def get_animations_for_article(article_id: int,
+                                db_path: str = "corpus/corpus.db") -> list:
+    """返回某篇文章所有已生成（status='done'）的动画列表。"""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("""
+            SELECT id, image_index, image_hash, graph_json, status, error_msg, created_at
+            FROM article_animations
+            WHERE article_id=? AND status='done'
+            ORDER BY image_index
+        """, (article_id,)).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try:
+                g = json.loads(d.get("graph_json") or "{}")
+                d["title"] = g.get("title", f"图 {d['image_index']+1}")
+            except Exception:
+                d["title"] = f"图 {d['image_index']+1}"
+            result.append(d)
+        return result
+    finally:
+        conn.close()
+
+
+def get_animation_html(animation_id: int,
+                       db_path: str = "corpus/corpus.db"):
+    """返回指定动画的 HTML 内容，不存在则返回 None。"""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT animation_html FROM article_animations WHERE id=?",
+            (animation_id,)
+        ).fetchone()
+        return row["animation_html"] if row else None
     finally:
         conn.close()

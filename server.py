@@ -42,6 +42,7 @@ def _get_session(handler):
     return None
 
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_MODELS_BASE_URL = "https://models.inference.ai.azure.com"
 DB_PATH = os.environ.get("DB_PATH", "corpus/corpus.db")
@@ -110,6 +111,21 @@ ARTICLE_FOOTER = """
 # 文章生成任务池 {task_id: {"status": "running"|"done"|"error", "result": ...}}
 import uuid
 _gen_tasks = {}
+
+# 动画生成任务池 {task_id: {"status": "running"|"done"|"error", "progress": str, "results": [...], "_ts": float}}
+_anim_tasks = {}
+_ANIM_TASK_TTL = 3600  # 1小时后清理已完成任务
+
+def _cleanup_anim_tasks():
+    import time
+    now = time.time()
+    stale = [k for k, v in list(_anim_tasks.items())
+             if v.get("status") != "running" and now - v.get("_ts", now) > _ANIM_TASK_TTL]
+    for k in stale:
+        _anim_tasks.pop(k, None)
+    t = threading.Timer(1800, _cleanup_anim_tasks)
+    t.daemon = True
+    t.start()
 
 # 公众号分析缓存
 _wechat_analysis_cache = {}
@@ -281,11 +297,8 @@ def _build_draft_prompt(articles_text: str, extracted_points: str = "") -> tuple
     return system_msg, user_msg
 
 def _build_review_prompt(draft: str) -> str:
-    today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y年%m月%d日")
     return f"""你是独立编辑，对以下医疗AI公众号文章进行严格审核。
 只输出JSON批注，不要重写文章，不要输出JSON以外的任何内容。
-
-今天日期：{today}（审核时以此为准，不要将今天或更早的日期判断为"未来日期"）
 
 文章：
 {draft}
@@ -301,8 +314,7 @@ def _build_review_prompt(draft: str) -> str:
 1. 每条issue包含：原文定位 + 问题说明 + 修改建议，输出3-5条，按优先级排序。
 2. 至少1条issue检查事实可信度：是否有无法核实的数据、编造引用、绝对化表述。
 3. 检查"决策价值"：读者读完能得到什么具体判断或行动参考？如果只是"介绍了什么"而没有"所以你应该怎么做"，作为high priority issue。
-4. 检查段落逻辑衔接：相邻两段之间是否有明确的因果、递进或转折关系？如果前后两段各说各的、缺少连接逻辑，作为medium priority issue指出，并给出具体衔接改法。
-5. 如有冗余句子，在cut_candidates中指出。
+4. 如有冗余句子，在cut_candidates中指出。
 
 输出JSON：
 ```json
@@ -383,12 +395,6 @@ def _build_polish_prompt(draft_v1: str, review_data: dict) -> str:
 - 给出3个备选标题（判断型/数字型/场景型），每个≤20字，口语化
 - 在2-3处最有判断力的句子前加 ★ 标记
 - 参考文献原样保留
-
-## 排版规范
-- 小标题用结论句，加粗，每个小标题下优先用列表承载核心信息
-- 每条列表项必须包含具体数字、机构名、案例或可核实的事实，禁止纯概念性列表（只有名词没有数据）
-- 关键数字和结论句加粗，每段最多1处
-- 段落之间空行，保持视觉节奏
 
 输出格式：
 【备选标题】
@@ -1602,6 +1608,35 @@ HTML = """<!DOCTYPE html>
   .btn-generate:hover { opacity:.9; }
   .btn-generate:disabled { opacity:.5; cursor:not-allowed; }
 
+  /* 动画解析按钮与面板 */
+  .anim-btn { font-size:12px;color:#9f7aea;background:#faf5ff;border:1px solid #d6bcfa;
+              padding:4px 12px;border-radius:12px;cursor:pointer;font-weight:500; }
+  .anim-btn:hover { background:#e9d8fd; }
+  .anim-panel { margin-top:12px;border:1px solid #e9d8fd;border-radius:12px;
+                overflow:hidden;background:#fdf9ff; }
+  .anim-toolbar { display:flex;align-items:center;gap:10px;padding:10px 14px;
+                  background:#f3ebff;border-bottom:1px solid #e9d8fd; }
+  .anim-toolbar-title { font-size:13px;font-weight:600;color:#553c9a;flex:1; }
+  .anim-tab-bar { display:flex;gap:6px;padding:10px 14px 0;flex-wrap:wrap; }
+  .anim-tab { font-size:12px;padding:4px 12px;border-radius:10px;cursor:pointer;
+              border:1px solid #d6bcfa;background:white;color:#6b46c1;font-weight:500; }
+  .anim-tab.active { background:#6b46c1;color:white;border-color:#6b46c1; }
+  .anim-frame { width:100%;border:none;display:block;min-height:480px; }
+  .anim-upload-area { padding:16px 14px;border-top:1px solid #e9d8fd; }
+  .anim-upload-label { font-size:12px;color:#718096;margin-bottom:8px;display:block; }
+  .anim-upload-row { display:flex;gap:8px;flex-wrap:wrap;align-items:center; }
+  .anim-file-btn { font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid #d6bcfa;
+                   background:white;color:#6b46c1;cursor:pointer;font-weight:500; }
+  .anim-auto-btn { font-size:12px;padding:6px 14px;border-radius:8px;border:none;
+                   background:#6b46c1;color:white;cursor:pointer;font-weight:500; }
+  .anim-auto-btn:disabled { opacity:.5;cursor:not-allowed; }
+  .anim-progress { font-size:12px;color:#6b46c1;padding:10px 14px;
+                   display:flex;align-items:center;gap:8px; }
+  @keyframes anim-spin { to { transform:rotate(360deg); } }
+  .anim-spinner { width:14px;height:14px;border:2px solid #d6bcfa;
+                  border-top-color:#6b46c1;border-radius:50%;
+                  animation:anim-spin .8s linear infinite;flex-shrink:0; }
+
   /* 推荐卡片生成按钮 */
   .rec-gen-btn { width:100%; margin-top:14px; padding:10px 0;
                  background:linear-gradient(135deg,#667eea,#764ba2); color:white;
@@ -2194,15 +2229,21 @@ function renderDigest(digest) {
               ${a.score.toFixed(1)}分 · ${a.source}${datePart}
             </div>
             ${a.summary ? `<div class="article-summary">${a.summary}</div>` : ''}
-            <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+            <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <button onclick="toggleDeepAnalysis(${a.id})"
                 id="btn-analyze-${a.id}"
                 style="font-size:12px;color:#667eea;background:#f0f4ff;border:1px solid #c3dafe;padding:4px 12px;border-radius:12px;cursor:pointer;font-weight:500">
                 🔬 深度分析
               </button>
+              <button class="anim-btn" id="anim-btn-${a.id}"
+                data-url="${a.url ? escHtml(a.url) : ''}"
+                onclick="toggleAnimation(${a.id})">
+                🎬 动画解析
+              </button>
               ${a.url ? `<a href="${a.url}" target="_blank" style="font-size:12px;color:#a0aec0;text-decoration:none">查看原文 →</a>` : ''}
             </div>
             <div id="deep-${a.id}" style="display:none;margin-top:12px"></div>
+            <div class="anim-panel" id="anim-panel-${a.id}" style="display:none"></div>
           </div>
         </div>
       </div>`;
@@ -2800,6 +2841,221 @@ async function toggleDeepAnalysis(id) {
     btn.textContent = '🔬 深度分析';
     btn.disabled = false;
   }
+}
+
+// ── 动画解析功能 ──────────────────────────────────────────
+
+// 展开/折叠动画面板，首次点击时拉取已有动画列表
+async function toggleAnimation(id) {
+  const panel = document.getElementById('anim-panel-' + id);
+  const btn   = document.getElementById('anim-btn-' + id);
+  if (!panel) return;
+
+  const articleUrl = btn ? (btn.dataset.url || '') : '';
+
+  if (panel.style.display !== 'none') {
+    panel.style.display = 'none';
+    btn.textContent = '🎬 动画解析';
+    return;
+  }
+
+  panel.style.display = 'block';
+  btn.textContent = '▲ 收起';
+
+  if (panel.dataset.loaded) return;
+
+  panel.innerHTML = `<div class="anim-progress"><div class="anim-spinner"></div>加载中...</div>`;
+
+  try {
+    const res = await fetch('/api/animation/list?article_id=' + id);
+    const data = await res.json();
+    renderAnimPanel(id, articleUrl, data.animations || []);
+    panel.dataset.loaded = '1';
+  } catch(e) {
+    panel.innerHTML = `<div style="padding:12px;font-size:13px;color:#e53e3e">加载失败：${e.message}</div>`;
+  }
+}
+
+// 渲染动画面板内容（已有动画列表 + 上传区）
+function renderAnimPanel(articleId, articleUrl, animations) {
+  const panel = document.getElementById('anim-panel-' + articleId);
+  if (!panel) return;
+
+  // 标签栏：每张成功的动画一个 tab
+  const tabsHtml = animations.length ? `
+    <div class="anim-tab-bar" id="anim-tabs-${articleId}">
+      ${animations.map((a,i) => `
+        <div class="anim-tab ${i===0?'active':''}"
+             onclick="switchAnimTab(${articleId},${i},${animations.length})"
+             id="anim-tab-${articleId}-${i}">
+          ${escHtml(a.title || ('图'+(i+1)))}
+        </div>`).join('')}
+    </div>
+    ${animations.map((a,i) => `
+      <div id="anim-frame-wrap-${articleId}-${i}" style="display:${i===0?'block':'none'}">
+        <iframe class="anim-frame" id="anim-iframe-${articleId}-${i}"
+          data-anim-id="${a.id}" style="height:0"
+          onload="autoResizeAnimFrame(this)"></iframe>
+      </div>`).join('')}` : '';
+
+  // 判断是否支持自动 PDF 下载
+  const canAuto = articleUrl && (
+    articleUrl.includes('arxiv.org') ||
+    articleUrl.includes('biorxiv.org') ||
+    articleUrl.includes('medrxiv.org') ||
+    articleUrl.includes('ncbi.nlm.nih.gov/pmc')
+  );
+
+  const uploadHtml = `
+    <div class="anim-upload-area" id="anim-upload-${articleId}">
+      <span class="anim-upload-label">
+        ${animations.length ? '➕ 添加更多机制图' : '📤 上传机制图生成动画'}
+      </span>
+      <div class="anim-upload-row">
+        ${canAuto ? `
+          <button class="anim-auto-btn" id="anim-auto-btn-${articleId}"
+            data-url="${escHtml(articleUrl)}"
+            onclick="triggerAutoPdf(${articleId})">
+            ⚡ 自动从 PDF 提取
+          </button>` : ''}
+        <label class="anim-file-btn">
+          🖼 上传图片
+          <input type="file" accept="image/*" style="display:none"
+            onchange="uploadAnimImage(${articleId}, this)">
+        </label>
+        <span style="font-size:11px;color:#a0aec0">支持 PNG/JPG，建议上传机制图（流程图、通路图等）</span>
+      </div>
+    </div>`;
+
+  panel.innerHTML = `
+    <div class="anim-toolbar">
+      <span class="anim-toolbar-title">🎬 论文图动画解析</span>
+      <button onclick="toggleAnimation(${articleId})"
+        style="font-size:12px;background:none;border:none;color:#6b46c1;cursor:pointer">▲ 收起</button>
+    </div>
+    ${tabsHtml}
+    <div id="anim-progress-${articleId}" style="display:none" class="anim-progress">
+      <div class="anim-spinner"></div>
+      <span id="anim-progress-text-${articleId}">处理中...</span>
+    </div>
+    ${uploadHtml}`;
+
+  // 延迟加载第一个 iframe（避免 srcdoc 在 innerHTML 插入时被截断）
+  if (animations.length) {
+    setTimeout(() => loadAnimFrame(articleId, 0, animations[0].id), 50);
+  }
+}
+
+// 切换动画 tab
+function switchAnimTab(articleId, idx, total) {
+  for (let i = 0; i < total; i++) {
+    const tab  = document.getElementById(`anim-tab-${articleId}-${i}`);
+    const wrap = document.getElementById(`anim-frame-wrap-${articleId}-${i}`);
+    if (tab)  tab.classList.toggle('active', i === idx);
+    if (wrap) wrap.style.display = i === idx ? 'block' : 'none';
+  }
+  // 懒加载：首次切换时才加载 iframe
+  const iframe = document.getElementById(`anim-iframe-${articleId}-${idx}`);
+  if (iframe && !iframe.src && !iframe.srcdoc) {
+    loadAnimFrame(articleId, idx, iframe.dataset.animId);
+  }
+}
+
+// 加载动画 iframe（通过 src 指向后端接口，避免 HTML 注入问题）
+function loadAnimFrame(articleId, idx, animId) {
+  const iframe = document.getElementById(`anim-iframe-${articleId}-${idx}`);
+  if (!iframe) return;
+  iframe.src = `/api/animation/html?id=${animId}`;
+}
+
+// iframe 加载完成后自动调高（跨域限制时回退到 480px）
+function autoResizeAnimFrame(iframe) {
+  try {
+    const h = iframe.contentDocument.body.scrollHeight;
+    if (h > 100) iframe.style.height = h + 'px';
+    else iframe.style.height = '480px';
+  } catch(e) {
+    iframe.style.height = '480px';
+  }
+}
+
+// 手动上传图片
+async function uploadAnimImage(articleId, input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) {
+    alert('图片超过 8MB，请压缩后再上传');
+    input.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const b64 = e.target.result.split(',')[1];
+    await _startAnimTask(articleId, { article_id: articleId, image_b64: b64 });
+  };
+  reader.readAsDataURL(file);
+}
+
+// 触发自动 PDF 提取
+async function triggerAutoPdf(articleId) {
+  const btn = document.getElementById('anim-auto-btn-' + articleId);
+  const articleUrl = btn ? (btn.dataset.url || '') : '';
+  if (btn) { btn.disabled = true; btn.textContent = '处理中...'; }
+  await _startAnimTask(articleId, { article_id: articleId, article_url: articleUrl });
+}
+
+// 发起动画生成任务，然后轮询进度
+async function _startAnimTask(articleId, payload) {
+  const progressDiv  = document.getElementById('anim-progress-' + articleId);
+  const progressText = document.getElementById('anim-progress-text-' + articleId);
+  const uploadArea   = document.getElementById('anim-upload-' + articleId);
+  if (progressDiv)  progressDiv.style.display = 'flex';
+  if (uploadArea)   uploadArea.style.display  = 'none';
+
+  try {
+    const res = await fetch('/api/animation/upload', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      if (progressText) progressText.textContent = '启动失败：' + data.msg;
+      if (uploadArea)   uploadArea.style.display  = 'block';
+      return;
+    }
+    _pollAnimTask(articleId, data.task_id, progressText, progressDiv, uploadArea);
+  } catch(e) {
+    if (progressText) progressText.textContent = '请求失败：' + e.message;
+    if (uploadArea)   uploadArea.style.display  = 'block';
+  }
+}
+
+// 轮询任务状态，完成后刷新面板
+async function _pollAnimTask(articleId, taskId, progressText, progressDiv, uploadArea) {
+  const res  = await fetch('/api/animation/status/' + taskId);
+  const data = await res.json();
+
+  if (progressText) progressText.textContent = data.progress || '处理中...';
+
+  if (data.status === 'running') {
+    setTimeout(() => _pollAnimTask(articleId, taskId, progressText, progressDiv, uploadArea), 2000);
+    return;
+  }
+
+  // 完成或出错，刷新动画列表
+  if (progressDiv) progressDiv.style.display = 'none';
+  const panel = document.getElementById('anim-panel-' + articleId);
+  if (panel) panel.dataset.loaded = '';   // 重置，触发重新加载
+
+  const listRes = await fetch('/api/animation/list?article_id=' + articleId);
+  const listData = await listRes.json();
+
+  // 取当前文章的 URL（从按钮 dataset 读）
+  const btn = document.getElementById('anim-btn-' + articleId);
+  const articleUrl = btn ? (btn.dataset.url || '') : '';
+  renderAnimPanel(articleId, articleUrl, listData.animations || []);
+  if (panel) panel.dataset.loaded = '1';
 }
 
 async function toggleStar(id) {
@@ -5003,6 +5259,41 @@ class Handler(BaseHTTPRequestHandler):
                      "last_sent_at": s["last_sent_at"]} for s in subs]
             self.send_json({"subscriptions": safe})
 
+        # ── 动画：查询文章已有动画列表 ──────────────────────────────
+        elif path == "/api/animation/list":
+            qs = parse_qs(urlparse(self.path).query)
+            article_id = qs.get("article_id", [""])[0]
+            if not article_id:
+                self.send_json({"ok": False, "msg": "缺少 article_id"}); return
+            try:
+                article_id = int(article_id)
+            except ValueError:
+                self.send_json({"ok": False, "msg": "article_id 格式错误"}); return
+            from db import get_animations_for_article
+            anims = get_animations_for_article(article_id, DB_PATH)
+            self.send_json({"ok": True, "animations": anims})
+
+        # ── 动画：获取单条动画 HTML ──────────────────────────────────
+        elif path == "/api/animation/html":
+            qs = parse_qs(urlparse(self.path).query)
+            anim_id = qs.get("id", [""])[0]
+            if not anim_id:
+                self.send_json({"ok": False, "msg": "缺少 id"}); return
+            from db import get_animation_html
+            html = get_animation_html(int(anim_id), DB_PATH)
+            if html is None:
+                self.send_json({"ok": False, "msg": "动画不存在"}); return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(html.encode())
+
+        # ── 动画：查询任务进度 ───────────────────────────────────────
+        elif path.startswith("/api/animation/status/"):
+            task_id = path[len("/api/animation/status/"):]
+            task = _anim_tasks.get(task_id, {"status": "not_found", "progress": "", "results": []})
+            self.send_json(task)
+
         else:
             self.send_response(404)
             self.end_headers()
@@ -5425,6 +5716,99 @@ class Handler(BaseHTTPRequestHandler):
             tokens = list_invite_tokens(user["email"], DB_PATH)
             self.send_json({"ok": True, "tokens": tokens})
 
+        # ── 动画：上传图片或触发 PDF 自动下载 ───────────────────────
+        elif self.path == "/api/animation/upload":
+            if not self._require_login():
+                return
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length))
+            article_id = body.get("article_id")
+            image_b64  = body.get("image_b64", "")   # 手动上传图片（base64）
+            article_url = body.get("article_url", "") # 自动 PDF 下载来源
+
+            if not article_id:
+                self.send_json({"ok": False, "msg": "缺少 article_id"}); return
+
+            import time as _time
+            task_id = str(uuid.uuid4())
+            _anim_tasks[task_id] = {"status": "running", "progress": "准备中...", "results": [], "_ts": _time.time()}
+
+            def _run_animation(task_id, article_id, image_b64, article_url):
+                import animation_service
+                # 保持 animation_service 能读到当前环境变量
+                import os as _os
+                animation_service.DASHSCOPE_API_KEY = _os.environ.get("DASHSCOPE_API_KEY", "")
+                animation_service.DEEPSEEK_API_KEY  = _os.environ.get("DEEPSEEK_API_KEY", "")
+
+                from db import save_animation
+
+                def _prog(msg):
+                    _anim_tasks[task_id]["progress"] = msg
+
+                try:
+                    if image_b64:
+                        # 手动上传单张图片
+                        _prog("🔍 Qwen-VL-Max 正在识别图片结构...")
+                        img_bytes = __import__("base64").b64decode(image_b64)
+                        result = animation_service.process_image(img_bytes)
+                        result["image_hash"] = animation_service.image_hash(img_bytes)
+                        result["image_index"] = 0
+                        raw_results = [result]
+                    else:
+                        # 自动从 PDF 下载提取
+                        raw_results = animation_service.process_article_pdf(
+                            article_url, progress_cb=_prog
+                        )
+
+                    saved = []
+                    for r in raw_results:
+                        ih = r.get("image_hash", "")
+                        if not ih:
+                            continue
+                        if r.get("ok"):
+                            anim_id = save_animation(
+                                article_id=article_id,
+                                image_index=r.get("image_index", 0),
+                                image_hash=ih,
+                                graph_json=r.get("graph", {}),
+                                animation_html=r.get("html", ""),
+                                status="done",
+                                db_path=DB_PATH,
+                            )
+                            saved.append({"id": anim_id, "ok": True,
+                                          "title": r.get("graph", {}).get("title", "机制图")})
+                        elif r.get("skipped"):
+                            saved.append({"ok": False, "skipped": True,
+                                          "reason": r.get("reason", "非机制图")})
+                        elif r.get("fallback_html"):
+                            # 降级：保存 fallback html
+                            anim_id = save_animation(
+                                article_id=article_id,
+                                image_index=r.get("image_index", 0),
+                                image_hash=ih,
+                                graph_json=r.get("graph", {}),
+                                animation_html=r.get("fallback_html", ""),
+                                status="done",
+                                error_msg=r.get("error", ""),
+                                db_path=DB_PATH,
+                            )
+                            saved.append({"id": anim_id, "ok": True, "fallback": True,
+                                          "title": r.get("graph", {}).get("title", "机制图")})
+                        else:
+                            saved.append({"ok": False, "error": r.get("error", "未知错误")})
+
+                    import time as _t
+                    _anim_tasks[task_id] = {"status": "done", "progress": "完成", "results": saved, "_ts": _t.time()}
+                except Exception as e:
+                    import time as _t
+                    _anim_tasks[task_id] = {"status": "error", "progress": str(e), "results": [], "_ts": _t.time()}
+
+            t = threading.Thread(target=_run_animation,
+                                 args=(task_id, article_id, image_b64, article_url),
+                                 daemon=True)
+            t.start()
+            self.send_json({"ok": True, "task_id": task_id})
+
         else:
             self.send_response(404)
             self.end_headers()
@@ -5439,6 +5823,9 @@ if __name__ == "__main__":
     t = threading.Timer(60, fetch_user_feeds_once)
     t.daemon = True
     t.start()
+
+    # 启动动画任务清理（每30分钟清理超过1小时的已完成任务）
+    _cleanup_anim_tasks()
 
     port = int(os.environ.get("PORT", 8888))
     print(f"✓ 服务启动：http://localhost:{port}")

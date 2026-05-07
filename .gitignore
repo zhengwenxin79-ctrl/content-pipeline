@@ -30,3 +30,6 @@ package-lock.json
 # 日志
 *.log
 server.py.bak
+
+# 测试输出
+test_animation_output.html

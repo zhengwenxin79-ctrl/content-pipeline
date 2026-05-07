@@ -4,3 +4,5 @@ requests>=2.31.0
 beautifulsoup4>=4.12.0
 pyyaml>=6.0
 PyExecJS>=1.5.1
+pymupdf>=1.23.0
+Pillow>=10.0.0
