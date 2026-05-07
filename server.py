@@ -2909,8 +2909,24 @@ function renderAnimPanel(articleId, articleUrl, animations) {
   const uploadHtml = `
     <div class="anim-upload-area" id="anim-upload-${articleId}">
       <span class="anim-upload-label">
-        ${animations.length ? '➕ 添加更多机制图' : '📤 上传机制图生成动画'}
+        ${animations.length ? '➕ 添加更多机制图' : '📤 解析论文机制图'}
       </span>
+
+      <!-- 摘要输入（折叠式，可选） -->
+      <details style="margin-bottom:10px">
+        <summary style="font-size:12px;color:#6b46c1;cursor:pointer;user-select:none;
+                        list-style:none;display:flex;align-items:center;gap:4px">
+          <span>📋 粘贴论文摘要</span>
+          <span style="font-size:10px;color:#a0aec0">（可选，让解读更贴近原文）</span>
+        </summary>
+        <textarea id="anim-abstract-${articleId}"
+          placeholder="粘贴 Abstract / 摘要原文，AI 将据此生成论文专属解读而非通用词典..."
+          style="width:100%;margin-top:8px;padding:8px 10px;font-size:12px;
+                 border:1px solid #d6bcfa;border-radius:8px;resize:vertical;
+                 min-height:80px;color:#2d3748;line-height:1.6;
+                 font-family:-apple-system,'PingFang SC',sans-serif"></textarea>
+      </details>
+
       <div class="anim-upload-row">
         ${canAuto ? `
           <button class="anim-auto-btn" id="anim-auto-btn-${articleId}"
@@ -2919,11 +2935,13 @@ function renderAnimPanel(articleId, articleUrl, animations) {
             ⚡ 自动从 PDF 提取
           </button>` : ''}
         <label class="anim-file-btn">
-          🖼 上传图片
+          🖼 上传 / 粘贴截图
           <input type="file" accept="image/*" style="display:none"
             onchange="uploadAnimImage(${articleId}, this)">
         </label>
-        <span style="font-size:11px;color:#a0aec0">支持 PNG/JPG，建议上传机制图（流程图、通路图等）</span>
+        <span style="font-size:11px;color:#a0aec0">
+          ${canAuto ? '或' : ''}支持机制图截图（PNG/JPG）
+        </span>
       </div>
     </div>`;
 
@@ -2991,7 +3009,8 @@ async function uploadAnimImage(articleId, input) {
   const reader = new FileReader();
   reader.onload = async (e) => {
     const b64 = e.target.result.split(',')[1];
-    await _startAnimTask(articleId, { article_id: articleId, image_b64: b64 });
+    const abstract = (document.getElementById('anim-abstract-' + articleId)?.value || '').trim();
+    await _startAnimTask(articleId, { article_id: articleId, image_b64: b64, abstract });
   };
   reader.readAsDataURL(file);
 }
@@ -3000,8 +3019,9 @@ async function uploadAnimImage(articleId, input) {
 async function triggerAutoPdf(articleId) {
   const btn = document.getElementById('anim-auto-btn-' + articleId);
   const articleUrl = btn ? (btn.dataset.url || '') : '';
+  const abstract = (document.getElementById('anim-abstract-' + articleId)?.value || '').trim();
   if (btn) { btn.disabled = true; btn.textContent = '处理中...'; }
-  await _startAnimTask(articleId, { article_id: articleId, article_url: articleUrl });
+  await _startAnimTask(articleId, { article_id: articleId, article_url: articleUrl, abstract });
 }
 
 // 发起动画生成任务，然后轮询进度
@@ -5722,9 +5742,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length))
-            article_id = body.get("article_id")
-            image_b64  = body.get("image_b64", "")   # 手动上传图片（base64）
-            article_url = body.get("article_url", "") # 自动 PDF 下载来源
+            article_id  = body.get("article_id")
+            image_b64   = body.get("image_b64", "")    # 手动上传图片（base64）
+            article_url = body.get("article_url", "")  # 自动 PDF 下载来源
+            abstract    = body.get("abstract", "")     # 论文摘要（可选，提升解释质量）
 
             if not article_id:
                 self.send_json({"ok": False, "msg": "缺少 article_id"}); return
@@ -5733,7 +5754,7 @@ class Handler(BaseHTTPRequestHandler):
             task_id = str(uuid.uuid4())
             _anim_tasks[task_id] = {"status": "running", "progress": "准备中...", "results": [], "_ts": _time.time()}
 
-            def _run_animation(task_id, article_id, image_b64, article_url):
+            def _run_animation(task_id, article_id, image_b64, article_url, abstract):
                 import animation_service
                 # 保持 animation_service 能读到当前环境变量
                 import os as _os
@@ -5747,17 +5768,15 @@ class Handler(BaseHTTPRequestHandler):
 
                 try:
                     if image_b64:
-                        # 手动上传单张图片
                         _prog("🔍 Qwen-VL-Max 正在识别图片结构...")
                         img_bytes = __import__("base64").b64decode(image_b64)
-                        result = animation_service.process_image(img_bytes)
+                        result = animation_service.process_image(img_bytes, abstract=abstract)
                         result["image_hash"] = animation_service.image_hash(img_bytes)
                         result["image_index"] = 0
                         raw_results = [result]
                     else:
-                        # 自动从 PDF 下载提取
                         raw_results = animation_service.process_article_pdf(
-                            article_url, progress_cb=_prog
+                            article_url, progress_cb=_prog, abstract=abstract
                         )
 
                     saved = []
@@ -5804,7 +5823,7 @@ class Handler(BaseHTTPRequestHandler):
                     _anim_tasks[task_id] = {"status": "error", "progress": str(e), "results": [], "_ts": _t.time()}
 
             t = threading.Thread(target=_run_animation,
-                                 args=(task_id, article_id, image_b64, article_url),
+                                 args=(task_id, article_id, image_b64, article_url, abstract),
                                  daemon=True)
             t.start()
             self.send_json({"ok": True, "task_id": task_id})

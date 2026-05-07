@@ -84,14 +84,14 @@ def test_single_image(image_path: str):
         print("⚠ 节点数量不足，跳过动画生成")
         sys.exit(0)
 
-    # Step 2: DeepSeek 生成 HTML
-    print(f"\n[Step 2] 调用 DeepSeek-V3 生成交互式 HTML 动画...")
-    print("  (预计 20-60 秒，请耐心等待...)")
+    # Step 2: 生成交互 HTML（原图叠加热区模式）
+    print(f"\n[Step 2] 生成原图交互式 HTML（DeepSeek 生成知识卡片）...")
+    print("  (预计 10-30 秒，请耐心等待...)")
     try:
-        html = animation_service.generate_animation_html(graph)
+        html = animation_service.generate_animation_html(graph, image_bytes=img_bytes)
         print(f"✓ HTML 生成成功，大小：{len(html)//1024} KB")
     except Exception as e:
-        print(f"⚠ DeepSeek 调用失败（{e}），使用降级方案...")
+        print(f"⚠ 生成失败（{e}），使用降级方案...")
         html = animation_service._fallback_html(graph)
         print(f"✓ 降级 HTML 生成成功")
 
