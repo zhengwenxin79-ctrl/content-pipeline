@@ -52,14 +52,32 @@ def derive_pdf_url(article_url: str) -> Optional[str]:
     return None
 
 
-def download_pdf(pdf_url: str, timeout: int = 30) -> bytes:
-    """下载 PDF，返回原始字节。失败抛出异常。"""
+def download_pdf(pdf_url: str, connect_timeout: int = 10,
+                 total_timeout: int = 20, max_mb: int = 20) -> bytes:
+    """下载 PDF，返回原始字节。超时或过大均抛出异常。"""
+    import time
     headers = {"User-Agent": "Mozilla/5.0 (research bot; contact: research@example.com)"}
-    resp = requests.get(pdf_url, headers=headers, timeout=timeout)
+    resp = requests.get(pdf_url, headers=headers,
+                        timeout=connect_timeout, stream=True)
     resp.raise_for_status()
-    if "application/pdf" not in resp.headers.get("Content-Type", "") and not resp.content[:4] == b"%PDF":
-        raise ValueError(f"响应不是 PDF（Content-Type: {resp.headers.get('Content-Type')}）")
-    return resp.content
+
+    deadline = time.time() + total_timeout
+    max_bytes = max_mb * 1024 * 1024
+    chunks = []
+    received = 0
+    for chunk in resp.iter_content(chunk_size=65536):
+        if time.time() > deadline:
+            raise TimeoutError(f"PDF 下载超时（>{total_timeout}s），请改用手动上传截图")
+        if chunk:
+            chunks.append(chunk)
+            received += len(chunk)
+            if received > max_bytes:
+                raise ValueError(f"PDF 文件超过 {max_mb}MB，跳过")
+
+    data = b"".join(chunks)
+    if data[:4] != b"%PDF":
+        raise ValueError(f"响应不是有效 PDF（Content-Type: {resp.headers.get('Content-Type')}）")
+    return data
 
 
 # ── PDF 图片提取 ───────────────────────────────────────────────────────────────
