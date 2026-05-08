@@ -3001,8 +3001,10 @@ function switchAnimTab(articleId, idx, total) {
     if (wrap) wrap.style.display = i === idx ? 'block' : 'none';
   }
   // 懒加载：首次切换时才加载 iframe
+  // 注意：未设 src 的 iframe，iframe.src 返回当前页面 URL 而非空字符串，
+  // 必须用 getAttribute('src') 来判断是否真正设置过 src
   const iframe = document.getElementById(`anim-iframe-${articleId}-${idx}`);
-  if (iframe && !iframe.src && !iframe.srcdoc) {
+  if (iframe && !iframe.getAttribute('src')) {
     loadAnimFrame(articleId, idx, iframe.dataset.animId);
   }
 }
