@@ -207,6 +207,88 @@ def analyze_image_with_qwen(image_bytes: bytes) -> dict:
     return _extract_json(text)
 
 
+# ── Pass-2 坐标校准 ────────────────────────────────────────────────────────────
+
+_VERIFY_PROMPT = """这张图片中已识别出若干节点，下方列出了每个节点的估算坐标（x/y 为整图相对位置，左上角=0,0，右下角=1,1）。
+
+已识别节点及其估算坐标：
+{nodes_list}
+
+请仔细对照图片，完成以下任务：
+1. 检查每个节点坐标是否准确指向该标签/图形元素的视觉中心
+2. 若坐标偏差超过 0.03，给出修正后的 x/y
+3. 若某节点在图中完全找不到，标记 "missing": true
+
+返回格式——纯 JSON 对象，key 为节点 id：
+{{
+  "n1": {{"x": 0.35, "y": 0.42}},
+  "n2": {{"x": 0.65, "y": 0.18}},
+  "n3": {{"missing": true}}
+}}
+
+只输出 JSON，不要任何说明文字。"""
+
+
+def _verify_node_positions(image_bytes: bytes, nodes: list) -> list:
+    """
+    Pass-2 坐标校准：将原图 + Pass-1 估算坐标一起发给 Qwen，
+    让它对照图片逐个核对并修正偏差超过 0.03 的坐标。
+    失败时静默返回原始节点列表（不中断流程）。
+    """
+    from openai import OpenAI
+    if not DASHSCOPE_API_KEY or not nodes:
+        return nodes
+
+    # 构建节点描述（只传 id、label、label_zh、当前 x/y）
+    nodes_desc = "\n".join([
+        f'- id={n["id"]}: "{n.get("label_zh") or n["label"]}" ({n["label"]})  '
+        f'x={n["x"]:.3f}, y={n["y"]:.3f}'
+        for n in nodes
+    ])
+    prompt = _VERIFY_PROMPT.format(nodes_list=nodes_desc)
+
+    client = OpenAI(
+        api_key=DASHSCOPE_API_KEY,
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    )
+    b64 = base64.b64encode(_compress_image(image_bytes)).decode()
+
+    try:
+        resp = client.chat.completions.create(
+            model="qwen-vl-max",
+            timeout=90,
+            max_tokens=1500,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        )
+        corrections = _extract_json(resp.choices[0].message.content.strip())
+    except Exception as e:
+        print(f"[verify] Qwen 校准调用失败，保留原坐标：{e}")
+        return nodes
+
+    # 应用修正
+    refined = []
+    changed = 0
+    for n in nodes:
+        fix = corrections.get(n["id"])
+        if not fix or fix.get("missing"):
+            refined.append(n)
+            continue
+        new_x = fix.get("x", n["x"])
+        new_y = fix.get("y", n["y"])
+        if abs(new_x - n["x"]) > 0.01 or abs(new_y - n["y"]) > 0.01:
+            changed += 1
+        refined.append({**n, "x": new_x, "y": new_y})
+
+    print(f"[verify] 校准完成，{changed}/{len(nodes)} 个节点坐标被修正")
+    return refined
+
+
 def _extract_json(text: str) -> dict:
     """从模型输出中提取 JSON，容忍前后有多余文字或代码块标记。"""
     # 去掉代码块标记
@@ -736,6 +818,10 @@ def process_image(image_bytes: bytes, abstract: str = "") -> dict:
 
     if len(graph.get("nodes", [])) < 2:
         return {"ok": False, "skipped": True, "reason": "节点数量不足，可能不是机制图"}
+
+    # Pass-2：坐标校准（对照原图修正偏差）
+    graph = dict(graph)
+    graph["nodes"] = _verify_node_positions(image_bytes, graph.get("nodes", []))
 
     try:
         html = generate_animation_html(graph, image_bytes=image_bytes, abstract=abstract)
