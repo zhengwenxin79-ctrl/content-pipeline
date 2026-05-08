@@ -19,7 +19,7 @@ DEEPSEEK_API_KEY  = os.environ.get("DEEPSEEK_API_KEY", "")
 MIN_IMG_WIDTH  = 300
 MIN_IMG_HEIGHT = 200
 # 单次最多处理几张图（防止费用失控）
-MAX_IMAGES_PER_PDF = 6
+MAX_IMAGES_PER_PDF = 2
 
 
 # ── PDF 下载 ───────────────────────────────────────────────────────────────────
@@ -818,10 +818,6 @@ def process_image(image_bytes: bytes, abstract: str = "") -> dict:
 
     if len(graph.get("nodes", [])) < 2:
         return {"ok": False, "skipped": True, "reason": "节点数量不足，可能不是机制图"}
-
-    # Pass-2：坐标校准（对照原图修正偏差）
-    graph = dict(graph)
-    graph["nodes"] = _verify_node_positions(image_bytes, graph.get("nodes", []))
 
     try:
         html = generate_animation_html(graph, image_bytes=image_bytes, abstract=abstract)
