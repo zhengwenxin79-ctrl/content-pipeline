@@ -5770,8 +5770,13 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/animation/upload":
             if not self._require_login():
                 return
-            length = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(length))
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception as _e:
+                import sys as _sys
+                print(f"[animation/upload] 请求体解析失败: {_e}", file=_sys.stderr)
+                self.send_json({"ok": False, "msg": f"请求体解析失败: {_e}"}); return
             article_id  = body.get("article_id")
             image_b64   = body.get("image_b64", "")    # 手动上传图片（base64）
             article_url = body.get("article_url", "")  # 自动 PDF 下载来源
@@ -5852,11 +5857,17 @@ class Handler(BaseHTTPRequestHandler):
                     import time as _t
                     _anim_tasks[task_id] = {"status": "error", "progress": str(e), "results": [], "_ts": _t.time()}
 
-            t = threading.Thread(target=_run_animation,
-                                 args=(task_id, article_id, image_b64, article_url, abstract),
-                                 daemon=True)
-            t.start()
-            self.send_json({"ok": True, "task_id": task_id})
+            try:
+                t = threading.Thread(target=_run_animation,
+                                     args=(task_id, article_id, image_b64, article_url, abstract),
+                                     daemon=True)
+                t.start()
+                self.send_json({"ok": True, "task_id": task_id})
+            except Exception as _e:
+                import sys as _sys, traceback as _tb
+                print(f"[animation/upload] handler 异常: {_e}", file=_sys.stderr)
+                _tb.print_exc(file=_sys.stderr)
+                self.send_json({"ok": False, "msg": f"服务器错误: {_e}"})
 
         else:
             self.send_response(404)
