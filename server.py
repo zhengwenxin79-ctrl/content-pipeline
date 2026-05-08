@@ -5739,8 +5739,7 @@ class Handler(BaseHTTPRequestHandler):
             token = create_invite_token(domain_tags, user["email"], DB_PATH)
             self.send_json({"ok": True, "token": token})
 
-        elif urlparse(self.path).path == "/api/invite/info":
-            from urllib.parse import parse_qs, urlparse
+        elif self.path.split("?")[0] == "/api/invite/info":
             qs = parse_qs(urlparse(self.path).query)
             token = qs.get("token", [""])[0]
             if not token:
