@@ -2144,6 +2144,37 @@ let _currentUser = null;
 
 let _summaryPollTimer = null;
 
+async function _pollSummaries() {
+  try {
+    const res = await fetch('/api/digest');
+    const data = await res.json();
+    const digest = data.digest || {};
+    // 原地更新各分类文章的摘要
+    ['top_journals','big_groups','commercial','open_source','未分类'].forEach(sec => {
+      (digest[sec] || []).forEach(a => {
+        const el = document.getElementById('summary-' + a.id);
+        if (!el) return;
+        if (a.summary && el.textContent !== a.summary) {
+          el.textContent = a.summary;
+          el.style.display = 'block';
+        }
+      });
+    });
+    const banner = document.getElementById('summaryGeneratingBanner');
+    if (digest._generating_summaries) {
+      const count = digest._need_summary_count || 0;
+      if (banner) banner.querySelector('span').textContent =
+        `AI 正在为 ${count} 篇文章生成一句话摘要，完成后自动填入…`;
+      _summaryPollTimer = setTimeout(_pollSummaries, 5000);
+    } else {
+      if (banner) banner.style.display = 'none';
+      _summaryPollTimer = null;
+    }
+  } catch(e) {
+    _summaryPollTimer = setTimeout(_pollSummaries, 8000);
+  }
+}
+
 async function loadData() {
   try {
   document.getElementById('content').innerHTML =
@@ -2153,20 +2184,17 @@ async function loadData() {
   renderStats(data.stats);
   renderDigest(data.digest);
 
-  // 如果有文章正在后台生成 AI 摘要，显示提示并自动轮询
+  // 如果有文章正在后台生成 AI 摘要，静默轮询并原地更新摘要文字
   const banner = document.getElementById('summaryGeneratingBanner');
   if (data.digest && data.digest._generating_summaries) {
     const count = data.digest._need_summary_count || 0;
     if (banner) {
       banner.style.display = 'flex';
       banner.querySelector('span').textContent =
-        `AI 正在为 ${count} 篇文章生成一句话摘要，约 ${Math.ceil(count * 0.8)} 秒后自动刷新…`;
+        `AI 正在为 ${count} 篇文章生成一句话摘要，完成后自动填入…`;
     }
     if (_summaryPollTimer) clearTimeout(_summaryPollTimer);
-    _summaryPollTimer = setTimeout(() => {
-      if (banner) banner.style.display = 'none';
-      loadData();
-    }, Math.max(10000, count * 800));
+    _summaryPollTimer = setTimeout(_pollSummaries, 5000);
   } else {
     if (banner) banner.style.display = 'none';
     if (_summaryPollTimer) { clearTimeout(_summaryPollTimer); _summaryPollTimer = null; }
@@ -2228,7 +2256,7 @@ function renderDigest(digest) {
               <span class="score-dot" style="background:${scoreColor(a.score)}"></span>
               ${a.score.toFixed(1)}分 · ${a.source}${datePart}
             </div>
-            ${a.summary ? `<div class="article-summary">${a.summary}</div>` : ''}
+            <div class="article-summary" id="summary-${a.id}" style="${a.summary ? '' : 'display:none'}">${a.summary || ''}</div>
             <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <button onclick="toggleDeepAnalysis(${a.id})"
                 id="btn-analyze-${a.id}"
