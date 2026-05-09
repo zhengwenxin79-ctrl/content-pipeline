@@ -3192,15 +3192,26 @@ async function _pollAnimTask(articleId, taskId, progressText, progressDiv, uploa
     renderAnimPanel(articleId, articleUrl, listData.animations || []);
     if (panel) panel.dataset.loaded = '1';
 
-    // 始终显示最终状态消息（success 不显示，其余 30s 后才消失）
+    // 始终显示最终状态消息
+    // - ✅ 成功：不显示（动画已渲染）
+    // - 📘 引导深度分析（无机制图）：持久显示直到用户重新触发
+    // - ⚠️/❌ 其他：30s 后自动消失
     const finalMsg = data.progress || '';
     if (finalMsg && !finalMsg.startsWith('✅')) {
       const newProg = document.getElementById('anim-progress-' + articleId);
       const newText = document.getElementById('anim-progress-text-' + articleId);
       if (newProg && newText) {
-        newText.textContent = finalMsg;
+        const isGuide = finalMsg.startsWith('📘');
+        // 引导文案的样式更显眼，spinner 隐藏
+        const spinner = newProg.querySelector('.anim-spinner');
+        if (spinner) spinner.style.display = isGuide ? 'none' : '';
+        newText.innerHTML = isGuide
+          ? finalMsg.replace(/「🔬 深度分析」/g, '<strong style="color:#553c9a">「🔬 深度分析」</strong>')
+          : finalMsg;
         newProg.style.display = 'flex';
-        setTimeout(() => { if (newProg) newProg.style.display = 'none'; }, 30000);
+        if (!isGuide) {
+          setTimeout(() => { if (newProg) newProg.style.display = 'none'; }, 30000);
+        }
       }
     }
   } catch(err) {
@@ -6227,12 +6238,15 @@ class Handler(BaseHTTPRequestHandler):
                     if ok_n:
                         final_msg = f"✅ 完成，生成了 {ok_n} 个动画"
                     elif skip_n and not err_n:
-                        final_msg = f"⚠️ 未找到机制图（{skip_n} 张图均为统计图/实验图）"
+                        # 优先使用后端给出的 reason（已包含"建议点击深度分析"等引导文案）
+                        reason = next((r.get("reason") for r in saved if r.get("reason")), "")
+                        final_msg = f"📘 {reason}" if reason else f"⚠️ 未找到机制图（{skip_n} 张图均为统计图/实验图）"
                     elif err_n and saved:
                         first_err = next((r.get("error") for r in saved if r.get("error")), "处理失败")
                         final_msg = f"❌ {first_err}"
                     elif skip_n:
-                        final_msg = f"⚠️ 未找到机制图（{skip_n} 张图均为统计图/实验图）"
+                        reason = next((r.get("reason") for r in saved if r.get("reason")), "")
+                        final_msg = f"📘 {reason}" if reason else f"⚠️ 未找到机制图（{skip_n} 张图均为统计图/实验图）"
                     else:
                         final_msg = "⚠️ PDF 中未提取到图片"
                     print(f"[anim] done: {final_msg} saved={len(saved)}", file=_sys.stderr)

@@ -231,12 +231,35 @@ def _crop_to_diagram_region(image_bytes: bytes, dr: dict,
     按 diagram_region 裁剪图片并同步转换节点坐标。
     pad 为额外留白比例（避免节点热区被裁掉边缘）。
     裁剪区域过小（<20% 页面）或失败时原样返回。
+
+    保护：Qwen 给的 dr 经常偏大（把 caption / 正文段落也圈进来），
+    会导致节点落在裁剪图的正文区。用节点 bbox + 0.10 padding 反推一个
+    紧凑边界，与 Qwen dr 取交集，确保裁剪图不会比节点分布范围大太多。
     """
     import copy
-    x1 = max(0.0, dr.get("x1", 0) - pad)
-    y1 = max(0.0, dr.get("y1", 0) - pad)
-    x2 = min(1.0, dr.get("x2", 1) + pad)
-    y2 = min(1.0, dr.get("y2", 1) + pad)
+    if nodes:
+        # 用节点 bbox 给裁剪区一个上下界，避免 Qwen 给的 dr 偏大圈到正文，
+        # 也避免 dr 偏小切掉边缘节点。
+        # - inner_pad: 必须包含的最小 padding（防止圆点贴边）
+        # - outer_pad: 允许的最大 padding（防止裁剪图比节点分布大太多）
+        inner_pad, outer_pad = 0.05, 0.10
+        xs = [n.get("x", 0.5) for n in nodes]
+        ys = [n.get("y", 0.5) for n in nodes]
+        must_x1, must_x2 = max(0.0, min(xs) - inner_pad), min(1.0, max(xs) + inner_pad)
+        must_y1, must_y2 = max(0.0, min(ys) - inner_pad), min(1.0, max(ys) + inner_pad)
+        can_x1, can_x2   = max(0.0, min(xs) - outer_pad), min(1.0, max(xs) + outer_pad)
+        can_y1, can_y2   = max(0.0, min(ys) - outer_pad), min(1.0, max(ys) + outer_pad)
+        # Qwen dr 钳位到 [can, must] 区间：必须 ≤ must（包住节点），且 ≥ can（不超出节点+大padding）
+        x1 = max(can_x1, min(must_x1, dr.get("x1", 0) - pad))
+        y1 = max(can_y1, min(must_y1, dr.get("y1", 0) - pad))
+        x2 = min(can_x2, max(must_x2, dr.get("x2", 1) + pad))
+        y2 = min(can_y2, max(must_y2, dr.get("y2", 1) + pad))
+    else:
+        x1 = max(0.0, dr.get("x1", 0) - pad)
+        y1 = max(0.0, dr.get("y1", 0) - pad)
+        x2 = min(1.0, dr.get("x2", 1) + pad)
+        y2 = min(1.0, dr.get("y2", 1) + pad)
+
     w, h = x2 - x1, y2 - y1
 
     # 区域已接近全页，或范围异常时跳过裁剪
@@ -562,20 +585,26 @@ window.KNOWLEDGE_PLACEHOLDER = {};
 ## 输出
 直接输出完整 HTML（从 <!DOCTYPE html> 开始到 </html> 结束），不要任何说明，不要代码块标记。"""
 
-_KNOWLEDGE_PROMPT_BASE = """你是一位论文精读助手。根据节点列表%s，为每个节点生成帮助读者快速理解该图的中文解释。
+_KNOWLEDGE_PROMPT_BASE = """你是一位论文精读助手。根据节点列表%s，生成两部分中文解读：①整体导读 summary；②每个节点的详细解释。
 
 节点列表（JSON）：
 %s
 
-【输出格式】纯 JSON 对象，key 为节点 id，每个节点包含两个字段：
+【输出格式】严格的纯 JSON 对象，必须包含 summary 和 nodes 两个顶级字段：
 {
-  "n1": {
-    "desc": "是什么：专业准确的解释。若节点名称含「类型/类别/步骤/阶段/方法」等可枚举概念，必须用①②③…逐条列出核心条目并加1-2字说明（≤200字）；否则1-2句概括（≤80字）",
-    "role": "在本文的作用：结合%s说明该节点在论文核心方法/贡献中的具体职责（≤100字）"
+  "summary": "整体导读，按四段递进，每段 1-2 句、整段 150-220 字。\n① 解决什么问题（论文动机/临床或工程背景）；\n② 核心机制（按图中流程把节点串成一句话技术叙事，体现 A→B→C 的因果或处理顺序）；\n③ 与已有方法的差异（本文创新点，结合%s）；\n④ 主要结果或预期效果（%s中提到则写出关键数字/结论，否则省略此段）。\n四段之间用换行符 \\n 分隔，前置 ①②③④ 编号。",
+  "nodes": {
+    "n1": {
+      "desc": "是什么：专业准确的解释。若节点名称含「类型/类别/步骤/阶段/方法」等可枚举概念，必须用①②③…逐条列出核心条目并加1-2字说明（≤200字）；否则1-2句概括（≤80字）",
+      "role": "在本文的作用：结合%s说明该节点在论文核心方法/贡献中的具体职责（≤100字）"
+    }
   }
 }
 
-【要求】每个节点都必须输出，不能遗漏。只输出 JSON，不要任何说明文字。"""
+【要求】
+1. summary 必须基于图中节点和%s综合写出，不能笼统、不能复读节点名
+2. 每个节点都必须出现在 nodes 里，不能遗漏
+3. 只输出 JSON，不要任何说明文字、不要代码块标记"""
 
 
 def _build_knowledge_prompt(nodes_brief: list, abstract: str = "") -> str:
@@ -588,7 +617,11 @@ def _build_knowledge_prompt(nodes_brief: list, abstract: str = "") -> str:
         ctx_hint = ""
         role_hint = "图中信息"
         abstract_section = ""
-    return _KNOWLEDGE_PROMPT_BASE % (ctx_hint, nodes_json + abstract_section, role_hint)
+    # 5 个 % 占位符依次：ctx_hint, 节点+abstract, role_hint(创新点参考), role_hint(效果参考), role_hint(node作用参考), role_hint(总结参考)
+    return _KNOWLEDGE_PROMPT_BASE % (
+        ctx_hint, nodes_json + abstract_section,
+        role_hint, role_hint, role_hint, role_hint,
+    )
 
 
 def _clean_html(text: str) -> str:
@@ -602,11 +635,15 @@ def _clean_html(text: str) -> str:
     return text.strip()
 
 
-def _fetch_knowledge(graph_json: dict, abstract: str = "") -> dict:
-    """调用 DeepSeek 生成节点知识卡片，失败返回空 dict。"""
+def _fetch_knowledge(graph_json: dict, abstract: str = "") -> tuple:
+    """
+    调用 DeepSeek 同时生成「整体导读 summary」和「每节点知识卡片」。
+    返回 (summary_text, nodes_dict)；失败时返回 ("", {})。
+    nodes_dict 形如 {"n1": {"desc": ..., "role": ...}, ...}
+    """
     from openai import OpenAI
     if not DEEPSEEK_API_KEY:
-        return {}
+        return "", {}
     client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
     nodes_brief = [
         {"id": n["id"], "label": n["label"], "label_zh": n.get("label_zh", ""), "type": n.get("type", "")}
@@ -618,9 +655,16 @@ def _fetch_knowledge(graph_json: dict, abstract: str = "") -> dict:
             model="deepseek-chat", timeout=120, max_tokens=6000, temperature=0.2,
             messages=[{"role": "user", "content": prompt}],
         )
-        return _extract_json(resp.choices[0].message.content.strip())
+        raw = _extract_json(resp.choices[0].message.content.strip())
     except Exception:
-        return {}
+        return "", {}
+
+    # 兼容新旧格式：
+    #   新（含 summary）：{"summary": "...", "nodes": {"n1": {...}}}
+    #   旧（仅节点）：{"n1": {...}, "n2": {...}}
+    if isinstance(raw, dict) and "nodes" in raw and isinstance(raw.get("nodes"), dict):
+        return raw.get("summary", "") or "", raw["nodes"]
+    return "", raw if isinstance(raw, dict) else {}
 
 
 def generate_animation_html(graph_json: dict, image_bytes: bytes = None,
@@ -628,8 +672,11 @@ def generate_animation_html(graph_json: dict, image_bytes: bytes = None,
     """
     主入口：原图叠加交互热区模式（image_bytes 存在时）。
     abstract 传入论文摘要时，知识卡片将结合论文内容生成论文专属解读。
+    DeepSeek 生成的整体导读会替换 Qwen 给出的一句话 overall_description。
     """
-    knowledge = _fetch_knowledge(graph_json, abstract)
+    summary, knowledge = _fetch_knowledge(graph_json, abstract)
+    if summary:
+        graph_json = {**graph_json, "overall_description": summary}
     if image_bytes:
         return _build_overlay_html(graph_json, image_bytes, knowledge)
     return _fallback_html(graph_json)
@@ -1126,14 +1173,26 @@ def process_article_pdf(article_url: str, progress_cb=None,
             result = process_image(img_bytes, abstract=abstract, caption=caption, fallback=True)
             result["image_hash"] = image_hash(img_bytes)
             result["image_index"] = i
-            if not result.get("skipped"):
+            if result.get("skipped"):
+                continue
+            # 闸门：fallback 强制 prompt 要求 Qwen 至少返回 2 节点，
+            # 但论文标题/作者/参考文献页常被强行解析成 2-3 个伪节点（位置都挤在顶部）。
+            # 接受标准：节点数 ≥ 4，或 y 坐标范围 ≥ 0.3（说明节点确实分布在图形区，不是单行文字）。
+            if result.get("ok"):
+                g = result.get("graph") or {}
+                nodes = g.get("nodes", [])
+                ys = [n.get("y", 0.5) for n in nodes]
+                y_range = (max(ys) - min(ys)) if ys else 0
+                if len(nodes) < 4 and y_range < 0.3:
+                    _cb(f"   ⏭️ 强制识别结果不可信（{len(nodes)} 节点，y 范围 {y_range:.2f}），可能是标题/参考文献页，丢弃")
+                    continue
                 results.append(result)
-                if result.get("ok"):
-                    break  # 找到一个可用结果即止
+                break  # 找到一个可用结果即止
+            results.append(result)  # 保留 error 信息（不计入 ok）
 
-    if not results:
+    if not any(r.get("ok") for r in results):
         return [{"ok": False, "skipped": True,
-                 "reason": f"扫描了全部 {len(images)} 张图，均为统计图/实验图，未找到机制图",
+                 "reason": "这篇文章未识别到流程图/架构图/机制图，可能是临床试验、综述或纯实验论文。建议点击「🔬 深度分析」查看 LLM 生成的论文解读。",
                  "image_hash": "", "image_index": 0}]
 
     return results
