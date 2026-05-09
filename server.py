@@ -3106,6 +3106,18 @@ async function _pollAnimTask(articleId, taskId, progressText, progressDiv, uploa
   const articleUrl = btn ? (btn.dataset.url || '') : '';
   renderAnimPanel(articleId, articleUrl, listData.animations || []);
   if (panel) panel.dataset.loaded = '1';
+
+  // 显示最终状态消息（renderAnimPanel 重建了 DOM，所以重新获取元素）
+  const finalMsg = data.progress || '';
+  if (finalMsg && !finalMsg.startsWith('✅')) {
+    const newProg = document.getElementById('anim-progress-' + articleId);
+    const newText = document.getElementById('anim-progress-text-' + articleId);
+    if (newProg && newText) {
+      newText.textContent = finalMsg;
+      newProg.style.display = 'flex';
+      setTimeout(() => { if (newProg) newProg.style.display = 'none'; }, 8000);
+    }
+  }
 }
 
 async function toggleStar(id) {
@@ -5851,7 +5863,18 @@ class Handler(BaseHTTPRequestHandler):
                             saved.append({"ok": False, "error": r.get("error", "未知错误")})
 
                     import time as _t
-                    _anim_tasks[task_id] = {"status": "done", "progress": "完成", "results": saved, "_ts": _t.time()}
+                    ok_n    = sum(1 for r in saved if r.get("ok"))
+                    skip_n  = sum(1 for r in saved if r.get("skipped"))
+                    err_n   = len(saved) - ok_n - skip_n
+                    if ok_n:
+                        final_msg = f"✅ 完成，生成了 {ok_n} 个动画"
+                    elif skip_n:
+                        final_msg = f"⚠️ 未找到机制图（{skip_n} 张图均为统计图/实验图）"
+                    elif err_n and saved:
+                        final_msg = f"❌ {saved[0].get('error', '处理失败')}"
+                    else:
+                        final_msg = "⚠️ PDF 中未提取到图片"
+                    _anim_tasks[task_id] = {"status": "done", "progress": final_msg, "results": saved, "_ts": _t.time()}
                 except Exception as e:
                     import time as _t
                     _anim_tasks[task_id] = {"status": "error", "progress": str(e), "results": [], "_ts": _t.time()}
