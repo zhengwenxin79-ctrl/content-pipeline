@@ -32,6 +32,24 @@ def _make_session(user: dict) -> str:
     return token
 
 
+def _friendly_api_error(e: Exception) -> str:
+    """把 API 原始异常转成用户看得懂的中文提示。"""
+    s = str(e)
+    if "Insufficient Balance" in s or "402" in s:
+        return "AI 服务暂时不可用（配额已用尽，请联系管理员）"
+    if "rate limit" in s.lower() or "429" in s:
+        return "请求过于频繁，请稍后再试"
+    if "timeout" in s.lower() or "timed out" in s.lower():
+        return "AI 响应超时，请稍后重试"
+    if "connection" in s.lower() or "network" in s.lower():
+        return "网络连接异常，请稍后重试"
+    if "401" in s or "authentication" in s.lower():
+        return "AI 服务认证失败，请联系管理员"
+    if "500" in s or "Internal Server" in s:
+        return "AI 服务内部错误，请稍后重试"
+    return "生成失败，请稍后重试"
+
+
 def _get_session(handler):
     cookie = handler.headers.get("Cookie", "")
     for part in cookie.split(";"):
@@ -476,7 +494,7 @@ def generate_wechat_article(article_ids: list, style_hint: str = "") -> dict:
             )
             drafts[idx] = r.choices[0].message.content.strip()
         except Exception as e:
-            drafts[idx] = f"[生成失败: {e}]"
+            drafts[idx] = f"[{_friendly_api_error(e)}]"
 
     threads = [threading.Thread(target=gen_draft, args=(i,)) for i in range(3)]
     for t in threads: t.start()
@@ -5127,7 +5145,7 @@ class Handler(BaseHTTPRequestHandler):
                     conn.close()
                 self.send_json({"ok": True, "analysis": analysis, "cached": False})
             except Exception as e:
-                self.send_json({"ok": False, "msg": f"生成失败：{e}"})
+                self.send_json({"ok": False, "msg": _friendly_api_error(e)})
 
         elif path == "/api/survey/analyze":
             user = _get_session(self)
