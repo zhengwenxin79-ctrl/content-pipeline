@@ -3094,6 +3094,14 @@ async function _pollAnimTask(articleId, taskId, progressText, progressDiv, uploa
       return;
     }
 
+    if (data.status === 'not_found') {
+      if (progressText) progressText.textContent = '⚠️ 任务已中断（服务重启），请重新提交';
+      if (progressDiv) progressDiv.style.display = 'flex';
+      setTimeout(() => { if (progressDiv) progressDiv.style.display = 'none'; }, 15000);
+      if (uploadArea) uploadArea.style.display = 'block';
+      return;
+    }
+
     // 完成或出错，刷新动画列表
     if (progressDiv) progressDiv.style.display = 'none';
     const panel = document.getElementById('anim-panel-' + articleId);
