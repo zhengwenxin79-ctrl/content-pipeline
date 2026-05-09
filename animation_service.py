@@ -113,42 +113,44 @@ def image_hash(img_bytes: bytes) -> str:
 
 # ── Qwen-VL-Max 识图 ──────────────────────────────────────────────────────────
 
-_QWEN_PROMPT = """请分析这张图片，判断它是否是一张**机制/架构图**（展示系统组件之间的关系、流程、数据流或工作原理的示意图）。
-适用范围包括但不限于：医学/生物学机制图（分子通路、信号传导等）、计算机科学架构图（神经网络结构、算法流程、系统架构等）。
+_QWEN_PROMPT = """请分析这张图片，判断它是否包含**流程/架构/机制图**。
 
-【不是机制图的情况，直接返回】
-如果是以下类型，返回 {"skip": true, "reason": "..."}：
-- 统计图表（柱状图、折线图、散点图、ROC曲线等）
-- 医学影像（MRI、CT、病理切片、超声图像等）
-- 实验结果图（Western blot、凝胶电泳等）
-- 纯文字表格
-- 自然照片或截图
-- 概念插图/logo/示意图（只有1-2个抽象元素，没有多个节点之间的关系箭头）
-- 单张图标或图例说明
+【应该识别的图（只要有方框+箭头的流程关系，都算）】
+- 系统架构图、模型结构图、算法流程图
+- 研究方法/数据流程图（数据处理流程、实验设计示意图）
+- 医学/生物机制图（分子通路、信号传导、病理过程）
+- 任何展示"A→B→C"关系的图，只要有3个以上方框/节点和箭头连接
 
-【是机制图时，返回以下 JSON】
+【跳过的情况】
+仅以下类型才返回 skip=true：
+- 纯统计图表（柱状图、折线图、散点图、热图、ROC曲线等，没有流程箭头）
+- 医学影像（MRI、CT、病理切片、超声等）
+- 实验结果图（Western blot、凝胶电泳、色谱等）
+- 纯文字段落或表格（无图形元素）
+- 自然照片
+
+【注意】如果一张图里既有流程图又有统计图，优先识别流程图部分。
+
+【跳过时返回】{"skip": true, "reason": "..."}
+
+【识别到流程/机制图时，返回以下 JSON】
 {
   "skip": false,
-  "title": "机制简称（中文，10字以内）",
+  "title": "图的简称（中文，10字以内）",
   "diagram_region": {"x1": 0.0, "y1": 0.0, "x2": 1.0, "y2": 1.0},
   "nodes": [
-    {"id": "n1", "label": "节点英文原名", "label_zh": "中文名", "type": "molecule|protein|cell|organ|process|drug", "x": 0.3, "y": 0.2}
+    {"id": "n1", "label": "节点英文原名", "label_zh": "中文名", "type": "module|data|process|input|output|molecule|protein|cell|organ|drug", "x": 0.3, "y": 0.2}
   ],
   "edges": [
-    {"from": "n1", "to": "n2", "label": "作用", "type": "activate|inhibit|bind|transform|express"}
+    {"from": "n1", "to": "n2", "label": "关系", "type": "activate|inhibit|transform|bind|express"}
   ],
-  "overall_description": "一句话描述整体机制（中文）"
+  "overall_description": "一句话描述整体流程/机制（中文）"
 }
 
-【坐标标注规则 - 非常重要】
-1. diagram_region：先确定图形本身（不含图注/标题文字）在整张图片中的边界框，用 x1/y1（左上角）、x2/y2（右下角）表示，值域 0.0-1.0。
-2. 节点 x/y：节点在**整张图片**中的绝对相对位置（0.0-1.0，左上角为原点），不是在 diagram_region 内部的相对位置。
-3. 精确定位：x/y 必须指向节点标签文字或图形元素的**视觉中心**，误差控制在 ±0.03 以内。
-4. 如果图片包含图注段落（caption），图注区域的节点坐标应在 diagram_region.y2 以下，不要将图注文字误标为节点。
-
-节点类型说明（生物）：molecule=小分子/代谢物, protein=蛋白质/受体/酶, cell=细胞类型, organ=器官/组织, process=生理/病理过程, drug=药物/抑制剂。
-节点类型说明（计算机）：module=模型模块/层, data=数据/特征/向量, operation=运算/操作, input=输入, output=输出, process=处理步骤。
-边的类型：activate=激活/促进, inhibit=抑制/阻断, bind=结合, transform=转化/产生, express=表达/分泌。
+【坐标规则】
+- diagram_region：图形部分（不含caption文字）在整图中的边界框，值域0.0-1.0
+- 节点x/y：节点在**整张图片**中的绝对位置（左上角=0,0），误差≤0.05
+- 如图片是整页PDF页面，diagram_region应标出流程图所在区域，节点坐标指向方框中心
 
 只输出 JSON，不要任何说明文字。"""
 
@@ -819,7 +821,7 @@ def process_image(image_bytes: bytes, abstract: str = "") -> dict:
     if graph.get("skip"):
         return {"ok": False, "skipped": True, "reason": graph.get("reason", "不是机制图")}
 
-    if len(graph.get("nodes", [])) < 3:
+    if len(graph.get("nodes", [])) < 2:
         return {"ok": False, "skipped": True, "reason": "节点数量不足，可能不是机制图"}
 
     try:
