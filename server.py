@@ -2043,17 +2043,49 @@ HTML = """<!DOCTYPE html>
             <div style="font-size:12px;font-weight:600;color:#a0aec0;letter-spacing:.06em;margin-bottom:10px">选择领域（可多选）</div>
             <div style="display:flex;flex-wrap:wrap;gap:8px" id="subTagList"></div>
           </div>
-          <!-- 研究方向描述（AI重排序） -->
+          <!-- 研究档案管理 -->
           <div style="margin-top:4px">
-            <label style="font-size:13px;font-weight:600;color:#2d3748;display:block;margin-bottom:6px">
-              🎯 你的研究方向
-              <span style="font-weight:400;color:#a0aec0;font-size:12px">（选填，填写后 AI 会为你智能挑选最相关的论文）</span>
-            </label>
-            <textarea id="sub-research-direction" rows="2"
-              placeholder="如：我做心脏超声图像分割，关注轻量化模型在移动端的部署，以及多中心数据泛化问题"
-              style="width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none;resize:vertical;font-family:inherit;line-height:1.5"
-              onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e2e8f0'"></textarea>
-            <div style="font-size:12px;color:#a0aec0;margin-top:4px">填写后每日推送会附上"为什么推给你"的理由</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+              <label style="font-size:13px;font-weight:600;color:#2d3748">
+                🎯 我的研究方向
+                <span style="font-weight:400;color:#a0aec0;font-size:12px">（可添加多个，AI 按每个方向分层推送）</span>
+              </label>
+              <button onclick="showAddProfileForm()" id="addProfileBtn"
+                style="background:#667eea;color:white;border:none;padding:5px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">
+                ＋ 添加方向
+              </button>
+            </div>
+            <!-- 档案卡片列表 -->
+            <div id="profileList" style="display:flex;flex-direction:column;gap:8px"></div>
+            <!-- 添加/编辑表单（默认隐藏） -->
+            <div id="profileForm" style="display:none;background:#faf5ff;border:1.5px solid #d6bcfa;border-radius:10px;padding:14px;margin-top:8px">
+              <input type="hidden" id="profileEditId" value="">
+              <div style="margin-bottom:10px">
+                <label style="font-size:12px;font-weight:600;color:#553c9a;display:block;margin-bottom:4px">项目名称</label>
+                <input id="profileName" type="text" placeholder="如：脑肿瘤分割项目"
+                  style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none"
+                  onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e2e8f0'">
+              </div>
+              <div style="margin-bottom:12px">
+                <label style="font-size:12px;font-weight:600;color:#553c9a;display:block;margin-bottom:4px">研究方向描述</label>
+                <textarea id="profileDirection" rows="2"
+                  placeholder="如：我做脑肿瘤 MRI 自动分割，关注 Transformer 结构在小数据集上的泛化能力"
+                  style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;resize:vertical;font-family:inherit;line-height:1.5"
+                  onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e2e8f0'"></textarea>
+              </div>
+              <div id="profileExpandedHint" style="display:none;font-size:12px;color:#553c9a;margin-bottom:10px;padding:6px 10px;background:#f3ebff;border-radius:6px"></div>
+              <div style="display:flex;gap:8px">
+                <button onclick="saveProfile()"
+                  style="background:#6b46c1;color:white;border:none;padding:7px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">
+                  ✅ 保存
+                </button>
+                <button onclick="cancelProfileForm()"
+                  style="background:none;border:1.5px solid #d6bcfa;color:#6b46c1;padding:7px 14px;border-radius:8px;font-size:13px;cursor:pointer">
+                  取消
+                </button>
+              </div>
+            </div>
+            <div style="font-size:12px;color:#a0aec0;margin-top:6px">每日推送按方向分层：🎯精准匹配 · 🔭扩展视野 · 📡领域前沿</div>
           </div>
           <!-- 高级：自定义关键词 -->
           <details style="margin-top:4px">
@@ -2994,8 +3026,13 @@ function renderAnimPanel(articleId, articleUrl, animations) {
   panel.innerHTML = `
     <div class="anim-toolbar">
       <span class="anim-toolbar-title">🎬 论文图动画解析</span>
-      <button onclick="toggleAnimation(${articleId})"
-        style="font-size:12px;background:none;border:none;color:#6b46c1;cursor:pointer">▲ 收起</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        ${animations.length ? `<button onclick="resetAnimations(${articleId})"
+          style="font-size:11px;background:none;border:1px solid #e9d8fd;color:#a0aec0;padding:3px 8px;border-radius:6px;cursor:pointer"
+          title="清除旧缓存，重新提取">🔄 重置</button>` : ''}
+        <button onclick="toggleAnimation(${articleId})"
+          style="font-size:12px;background:none;border:none;color:#6b46c1;cursor:pointer">▲ 收起</button>
+      </div>
     </div>
     ${tabsHtml}
     <div id="anim-progress-${articleId}" style="display:none" class="anim-progress">
@@ -3007,6 +3044,27 @@ function renderAnimPanel(articleId, articleUrl, animations) {
   // 延迟加载第一个 iframe（避免 srcdoc 在 innerHTML 插入时被截断）
   if (animations.length) {
     setTimeout(() => loadAnimFrame(articleId, 0, animations[0].id), 50);
+  }
+}
+
+// 清除文章的所有动画缓存，重新提取
+async function resetAnimations(articleId) {
+  if (!confirm('清除该论文的所有动画缓存，之后需重新提取。确认？')) return;
+  const res = await fetch('/api/animation/reset', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({article_id: articleId})
+  });
+  const data = await res.json();
+  if (data.ok) {
+    const panel = document.getElementById('anim-panel-' + articleId);
+    if (panel) panel.dataset.loaded = '';
+    const btn = document.getElementById('anim-btn-' + articleId);
+    const articleUrl = btn ? (btn.dataset.url || '') : '';
+    renderAnimPanel(articleId, articleUrl, []);
+    if (panel) panel.dataset.loaded = '1';
+  } else {
+    alert('重置失败：' + (data.msg || ''));
   }
 }
 
@@ -4026,9 +4084,7 @@ async function loadSubscriptions() {
       `<span style="background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.3);border-radius:14px;padding:3px 10px;font-size:12px">${k.trim()}</span>`
     ).join('') + (data.keywords.split(',').length > 6 ? `<span style="font-size:12px;opacity:.6"> +${data.keywords.split(',').length-6} 个</span>` : '');
     document.getElementById('sub-keywords').value = data.keywords;
-    if (data.research_direction) {
-      document.getElementById('sub-research-direction').value = data.research_direction;
-    }
+    renderProfiles(data.profiles || []);
     formTitle.textContent = '修改推送领域';
     cancelBtn.style.display = 'inline-block';
     testBtn.style.display = 'inline-block';
@@ -4053,15 +4109,121 @@ async function subSaveKeywords() {
   if (!_currentUser) { requireLogin(subSaveKeywords); return; }
   const keywords = document.getElementById('sub-keywords').value.trim();
   if (!keywords) { showSubMsg('请填写关键词', false); return; }
-  const research_direction = document.getElementById('sub-research-direction').value.trim();
   const res = await fetch('/api/subscribe/save', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({keywords, research_direction})
+    body: JSON.stringify({keywords})
   });
   const data = await res.json();
   showSubMsg(data.msg, data.ok);
   if (data.ok) await loadSubscriptions();
+}
+
+// ── 研究档案管理 ─────────────────────────────────────────────
+let _profiles = [];
+
+function renderProfiles(profiles) {
+  _profiles = profiles;
+  const list = document.getElementById('profileList');
+  if (!list) return;
+  if (!profiles.length) {
+    list.innerHTML = '<div style="font-size:13px;color:#a0aec0;padding:8px 0">暂无研究方向，点击「添加方向」开始设置</div>';
+    return;
+  }
+  list.innerHTML = profiles.map(p => {
+    const kws = (p.expanded_keywords || []).slice(0, 5).join(' · ');
+    return `
+    <div style="background:#faf5ff;border:1.5px solid #d6bcfa;border-radius:10px;padding:12px 14px;position:relative">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:700;color:#553c9a;margin-bottom:4px">${escHtml(p.name)}</div>
+          <div style="font-size:13px;color:#4a5568;line-height:1.5">${escHtml(p.direction)}</div>
+          ${kws ? `<div style="font-size:11px;color:#a0aec0;margin-top:5px">🔍 ${escHtml(kws)}${p.expanded_keywords.length > 5 ? ' ...' : ''}</div>` : ''}
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button onclick="editProfile(${p.id})"
+            style="background:none;border:1px solid #d6bcfa;color:#6b46c1;padding:4px 10px;border-radius:6px;font-size:12px;cursor:pointer">编辑</button>
+          <button onclick="deleteProfile(${p.id})"
+            style="background:none;border:1px solid #fed7d7;color:#e53e3e;padding:4px 10px;border-radius:6px;font-size:12px;cursor:pointer">删除</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function showAddProfileForm() {
+  document.getElementById('profileEditId').value = '';
+  document.getElementById('profileName').value = '';
+  document.getElementById('profileDirection').value = '';
+  document.getElementById('profileExpandedHint').style.display = 'none';
+  document.getElementById('profileForm').style.display = 'block';
+}
+
+function editProfile(id) {
+  const p = _profiles.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById('profileEditId').value = id;
+  document.getElementById('profileName').value = p.name;
+  document.getElementById('profileDirection').value = p.direction;
+  const hint = document.getElementById('profileExpandedHint');
+  if (p.expanded_keywords && p.expanded_keywords.length) {
+    hint.textContent = '🔍 当前关键词：' + p.expanded_keywords.join(', ');
+    hint.style.display = 'block';
+  } else {
+    hint.style.display = 'none';
+  }
+  document.getElementById('profileForm').style.display = 'block';
+}
+
+function cancelProfileForm() {
+  document.getElementById('profileForm').style.display = 'none';
+}
+
+async function saveProfile() {
+  const id = document.getElementById('profileEditId').value;
+  const name = document.getElementById('profileName').value.trim() || '我的研究方向';
+  const direction = document.getElementById('profileDirection').value.trim();
+  if (!direction) { alert('请填写研究方向描述'); return; }
+
+  const hint = document.getElementById('profileExpandedHint');
+  hint.textContent = '🤖 AI 正在展开关键词...';
+  hint.style.display = 'block';
+
+  let res, data;
+  if (id) {
+    res = await fetch('/api/research-profiles/' + id, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, direction})
+    });
+  } else {
+    res = await fetch('/api/research-profiles', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, direction})
+    });
+  }
+  data = await res.json();
+  if (!data.ok && data.ok !== undefined) { hint.textContent = '❌ ' + (data.msg || '保存失败'); return; }
+
+  if (data.expanded_keywords && data.expanded_keywords.length) {
+    hint.textContent = '✅ 关键词：' + data.expanded_keywords.join(', ');
+  }
+  cancelProfileForm();
+  const subRes = await fetch('/api/subscribe/me');
+  const subData = await subRes.json();
+  renderProfiles(subData.profiles || []);
+}
+
+async function deleteProfile(id) {
+  if (!confirm('确定删除此研究方向？相关个性化评分也会清除。')) return;
+  const res = await fetch('/api/research-profiles/' + id, {method: 'DELETE'});
+  const data = await res.json();
+  if (data.ok) {
+    const subRes = await fetch('/api/subscribe/me');
+    const subData = await subRes.json();
+    renderProfiles(subData.profiles || []);
+  }
 }
 
 function _renderPreviewCards(articles) {
@@ -5320,15 +5482,33 @@ class Handler(BaseHTTPRequestHandler):
             user = _get_session(self)
             if not user:
                 self.send_json({"subscribed": False}); return
-            from db import get_active_subscriptions
+            from db import get_active_subscriptions, get_research_profiles
             subs = get_active_subscriptions(DB_PATH)
             sub = next((s for s in subs if s["email"] == user["email"]), None)
             if sub:
+                profiles = get_research_profiles(user["email"], DB_PATH)
                 self.send_json({"subscribed": True, "keywords": sub["keywords"],
                                 "research_direction": sub.get("research_direction") or "",
-                                "last_sent_at": sub.get("last_sent_at") or ""})
+                                "last_sent_at": sub.get("last_sent_at") or "",
+                                "profiles": [{"id": p["id"], "name": p["name"],
+                                              "direction": p["direction"],
+                                              "expanded_keywords": json.loads(p.get("expanded_keywords") or "[]")}
+                                             for p in profiles]})
             else:
                 self.send_json({"subscribed": False})
+
+        elif path == "/api/research-profiles":
+            user = _get_session(self)
+            if not user:
+                self.send_json({"ok": False, "msg": "未登录"}, 401); return
+            from db import get_research_profiles
+            profiles = get_research_profiles(user["email"], DB_PATH)
+            self.send_json({"profiles": [
+                {"id": p["id"], "name": p["name"], "direction": p["direction"],
+                 "expanded_keywords": json.loads(p.get("expanded_keywords") or "[]"),
+                 "created_at": p["created_at"]}
+                for p in profiles
+            ]})
 
         elif path == "/api/subscribe/preview":
             qs = parse_qs(urlparse(self.path).query)
@@ -5397,6 +5577,56 @@ class Handler(BaseHTTPRequestHandler):
         if not user:
             self.send_json({"error": "请先登录", "need_login": True}, 401)
         return user
+
+    def do_PUT(self):
+        if self.path.startswith("/api/research-profiles/"):
+            self._handle_profile_method()
+        else:
+            self.send_error(405)
+
+    def do_DELETE(self):
+        if self.path.startswith("/api/research-profiles/"):
+            self._handle_profile_method()
+        else:
+            self.send_error(405)
+
+    def _handle_profile_method(self):
+        user = self._require_login()
+        if not user: return
+        try:
+            pid = int(self.path.rstrip("/").split("/")[-1])
+        except ValueError:
+            self.send_json({"ok": False, "msg": "无效ID"}, 400); return
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length) or b"{}") if length else {}
+        if self.command == "PUT":
+            name = body.get("name")
+            direction = body.get("direction")
+            expanded = body.get("expanded_keywords")
+            if direction:
+                from analyze import expand_research_direction
+                from db import get_active_subscriptions
+                import base64
+                subs = get_active_subscriptions(DB_PATH)
+                sub = next((s for s in subs if s["email"] == user["email"]), None)
+                api_key = ""
+                if sub and sub.get("api_key"):
+                    try:
+                        api_key = base64.b64decode(sub["api_key"]).decode()
+                    except Exception:
+                        pass
+                expanded = expand_research_direction(direction, api_key or DEEPSEEK_API_KEY)
+            from db import update_research_profile
+            result = update_research_profile(pid, user["email"], name=name,
+                                             direction=direction,
+                                             expanded_keywords=expanded,
+                                             db_path=DB_PATH)
+            if direction:
+                result["expanded_keywords"] = expanded
+            self.send_json(result)
+        elif self.command == "DELETE":
+            from db import delete_research_profile
+            self.send_json(delete_research_profile(pid, user["email"], DB_PATH))
 
     def do_POST(self):
         if self.path == "/api/survey/submit":
@@ -5679,6 +5909,72 @@ class Handler(BaseHTTPRequestHandler):
                     pass
             self.send_json({"translations": translations})
 
+        elif self.path == "/api/research-profiles":
+            user = self._require_login()
+            if not user: return
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            name = body.get("name", "").strip() or "我的研究方向"
+            direction = body.get("direction", "").strip()
+            if not direction:
+                self.send_json({"ok": False, "msg": "研究方向不能为空"}, 400); return
+            from analyze import expand_research_direction
+            from db import create_research_profile, get_active_subscriptions
+            import base64
+            subs = get_active_subscriptions(DB_PATH)
+            sub = next((s for s in subs if s["email"] == user["email"]), None)
+            api_key = ""
+            if sub and sub.get("api_key"):
+                try:
+                    api_key = base64.b64decode(sub["api_key"]).decode()
+                except Exception:
+                    pass
+            expanded = expand_research_direction(direction, api_key or DEEPSEEK_API_KEY)
+            pid = create_research_profile(user["email"], name, direction, expanded, DB_PATH)
+            self.send_json({"ok": True, "id": pid,
+                            "expanded_keywords": expanded})
+
+        elif self.path.startswith("/api/research-profiles/"):
+            user = self._require_login()
+            if not user: return
+            try:
+                pid = int(self.path.split("/")[-1])
+            except ValueError:
+                self.send_json({"ok": False, "msg": "无效ID"}, 400); return
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            method = self.command
+            if method == "PUT":
+                name = body.get("name")
+                direction = body.get("direction")
+                expanded = body.get("expanded_keywords")
+                if direction:
+                    from analyze import expand_research_direction
+                    from db import get_active_subscriptions
+                    import base64
+                    subs = get_active_subscriptions(DB_PATH)
+                    sub = next((s for s in subs if s["email"] == user["email"]), None)
+                    api_key = ""
+                    if sub and sub.get("api_key"):
+                        try:
+                            api_key = base64.b64decode(sub["api_key"]).decode()
+                        except Exception:
+                            pass
+                    expanded = expand_research_direction(direction, api_key or DEEPSEEK_API_KEY)
+                from db import update_research_profile
+                result = update_research_profile(pid, user["email"], name=name,
+                                                 direction=direction,
+                                                 expanded_keywords=expanded,
+                                                 db_path=DB_PATH)
+                if direction:
+                    result["expanded_keywords"] = expanded
+                self.send_json(result)
+            elif method == "DELETE":
+                from db import delete_research_profile
+                self.send_json(delete_research_profile(pid, user["email"], DB_PATH))
+            else:
+                self.send_json({"ok": False, "msg": "不支持的方法"}, 405)
+
         elif self.path == "/api/subscribe/save":
             user = self._require_login()
             if not user: return
@@ -5807,6 +6103,26 @@ class Handler(BaseHTTPRequestHandler):
             from db import list_invite_tokens
             tokens = list_invite_tokens(user["email"], DB_PATH)
             self.send_json({"ok": True, "tokens": tokens})
+
+        # ── 动画：清除缓存重置 ────────────────────────────────────────
+        elif self.path == "/api/animation/reset":
+            if not self._require_login():
+                return
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+                article_id = int(body.get("article_id", 0))
+                if not article_id:
+                    self.send_json({"ok": False, "msg": "缺少 article_id"}); return
+                conn = get_conn(DB_PATH)
+                try:
+                    conn.execute("DELETE FROM article_animations WHERE article_id=?", (article_id,))
+                    conn.commit()
+                finally:
+                    conn.close()
+                self.send_json({"ok": True})
+            except Exception as e:
+                self.send_json({"ok": False, "msg": str(e)})
 
         # ── 动画：上传图片或触发 PDF 自动下载 ───────────────────────
         elif self.path == "/api/animation/upload":
