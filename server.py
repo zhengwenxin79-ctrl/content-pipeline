@@ -3027,9 +3027,9 @@ function renderAnimPanel(articleId, articleUrl, animations) {
     <div class="anim-toolbar">
       <span class="anim-toolbar-title">🎬 论文图动画解析</span>
       <div style="display:flex;gap:8px;align-items:center">
-        ${animations.length ? `<button onclick="resetAnimations(${articleId})"
+        <button onclick="resetAnimations(${articleId})"
           style="font-size:11px;background:none;border:1px solid #e9d8fd;color:#a0aec0;padding:3px 8px;border-radius:6px;cursor:pointer"
-          title="清除旧缓存，重新提取">🔄 重置</button>` : ''}
+          title="清除旧缓存，重新提取">🔄 重置</button>
         <button onclick="toggleAnimation(${articleId})"
           style="font-size:12px;background:none;border:none;color:#6b46c1;cursor:pointer">▲ 收起</button>
       </div>
