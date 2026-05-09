@@ -52,7 +52,7 @@ def derive_pdf_url(article_url: str) -> Optional[str]:
 
 
 def download_pdf(pdf_url: str, connect_timeout: int = 10,
-                 total_timeout: int = 20, max_mb: int = 20) -> bytes:
+                 total_timeout: int = 60, max_mb: int = 20) -> bytes:
     """下载 PDF，返回原始字节。超时或过大均抛出异常。"""
     import time
     headers = {"User-Agent": "Mozilla/5.0 (research bot; contact: research@example.com)"}
@@ -66,7 +66,7 @@ def download_pdf(pdf_url: str, connect_timeout: int = 10,
     received = 0
     for chunk in resp.iter_content(chunk_size=65536):
         if time.time() > deadline:
-            raise TimeoutError(f"PDF 下载超时（>{total_timeout}s），请改用手动上传截图")
+            raise TimeoutError(f"PDF 下载超时（>{total_timeout}s），网络较慢请稍后重试或手动上传截图")
         if chunk:
             chunks.append(chunk)
             received += len(chunk)
