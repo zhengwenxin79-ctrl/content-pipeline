@@ -18,8 +18,10 @@ DEEPSEEK_API_KEY  = os.environ.get("DEEPSEEK_API_KEY", "")
 # 最小机制图尺寸（像素），太小的图跳过
 MIN_IMG_WIDTH  = 300
 MIN_IMG_HEIGHT = 200
-# 单次最多处理几张图（防止费用失控）
-MAX_IMAGES_PER_PDF = 2
+# 从 PDF 中最多提取多少张候选图（扫描上限）
+MAX_IMAGES_PER_PDF = 8
+# 找到几张机制图后停止（通常 1 张就够）
+MAX_ANIM_RESULTS   = 1
 
 
 # ── PDF 下载 ───────────────────────────────────────────────────────────────────
@@ -908,15 +910,29 @@ def process_article_pdf(article_url: str, progress_cb=None,
     if not images:
         return [{"ok": False, "error": "PDF 中未找到符合尺寸要求的图片"}]
 
-    _cb(f"🔍 找到 {len(images)} 张图，开始分析...")
+    _cb(f"🔍 找到 {len(images)} 张候选图，逐张扫描机制图...")
 
-    # 逐张处理
+    # 逐张扫描：跳过统计图/实验图，找到机制图即停止
     results = []
+    skipped = 0
     for i, img_bytes in enumerate(images):
-        _cb(f"🤖 Qwen 分析第 {i+1}/{len(images)} 张图...")
+        _cb(f"🤖 Qwen 扫描第 {i+1}/{len(images)} 张图"
+            + (f"（已跳过 {skipped} 张非机制图）" if skipped else "") + "...")
         result = process_image(img_bytes, abstract=abstract)
         result["image_hash"] = image_hash(img_bytes)
         result["image_index"] = i
+
+        if result.get("skipped"):
+            skipped += 1
+            continue  # 不是机制图，继续往后找
+
         results.append(result)
+        if result.get("ok") and len([r for r in results if r.get("ok")]) >= MAX_ANIM_RESULTS:
+            break  # 已找到足够的机制图，停止
+
+    if not results:
+        return [{"ok": False, "skipped": True,
+                 "reason": f"扫描了全部 {len(images)} 张图，均为统计图/实验图，未找到机制图",
+                 "image_hash": "", "image_index": 0}]
 
     return results
