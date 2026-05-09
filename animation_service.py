@@ -450,15 +450,15 @@ _KNOWLEDGE_PROMPT_BASE = """你是一位论文精读助手。根据节点列表%
 节点列表（JSON）：
 %s
 
-输出格式——纯 JSON 对象，key 为节点 id，value 包含两个字段：
+【输出格式】纯 JSON 对象，key 为节点 id，每个节点包含两个字段：
 {
   "n1": {
-    "desc": "是什么：1-2句专业准确的名词解释（≤50字）",
-    "role": "在本文中的作用：结合%s说明该节点在论文核心贡献里的具体角色（≤80字）"
+    "desc": "是什么：专业准确的解释。若节点名称含「类型/类别/步骤/阶段/方法」等可枚举概念，必须用①②③…逐条列出核心条目并加1-2字说明（≤200字）；否则1-2句概括（≤80字）",
+    "role": "在本文的作用：结合%s说明该节点在论文核心方法/贡献中的具体职责（≤100字）"
   }
 }
 
-只输出 JSON，不要任何说明文字。"""
+【要求】每个节点都必须输出，不能遗漏。只输出 JSON，不要任何说明文字。"""
 
 
 def _build_knowledge_prompt(nodes_brief: list, abstract: str = "") -> str:
@@ -498,7 +498,7 @@ def _fetch_knowledge(graph_json: dict, abstract: str = "") -> dict:
     prompt = _build_knowledge_prompt(nodes_brief, abstract)
     try:
         resp = client.chat.completions.create(
-            model="deepseek-chat", timeout=120, max_tokens=4000, temperature=0.2,
+            model="deepseek-chat", timeout=120, max_tokens=6000, temperature=0.2,
             messages=[{"role": "user", "content": prompt}],
         )
         return _extract_json(resp.choices[0].message.content.strip())
@@ -733,6 +733,7 @@ function showNode(id) {{
   if (!n) return;
   const k = KNOWLEDGE[id] || {{}};
   const color = COLOR_MAP[n.type] || '#a0aec0';
+  const fmt = s => s ? s.replace(/\n/g, '<br>') : '';
 
   document.getElementById('nodeCard').innerHTML = `
     <div class="node-header">
@@ -742,8 +743,8 @@ function showNode(id) {{
         <div class="node-en">${{n.label}} · ${{n.type || ''}}</div>
       </div>
     </div>
-    ${{k.desc ? `<div class="card"><div class="card-label">📖 是什么</div>${{k.desc}}</div>` : ''}}
-    ${{k.role ? `<div class="card"><div class="card-label">🔗 通路中的作用</div>${{k.role}}</div>` : ''}}
+    ${{k.desc ? `<div class="card"><div class="card-label">📖 是什么</div>${{fmt(k.desc)}}</div>` : ''}}
+    ${{k.role ? `<div class="card"><div class="card-label">🔗 通路中的作用</div>${{fmt(k.role)}}</div>` : ''}}
     ${{!k.desc && !k.role ? `<div class="card">${{n.label_zh || n.label}}</div>` : ''}}
   `;
 }}
