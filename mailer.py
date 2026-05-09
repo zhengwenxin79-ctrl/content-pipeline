@@ -77,9 +77,10 @@ def rerank_articles(articles: list, research_direction: str, api_key: str = "") 
 
 要求：
 1. 只返回最相关的5篇，按相关性从高到低排序
-2. 每篇写一句话推荐理由（15字以内，说明为什么和用户研究方向相关）
-3. 严格按以下格式输出，每行一篇，不要输出其他内容：
-ID|推荐理由"""
+2. 每篇写一句话推荐理由（20字以内，说明与用户研究方向的具体关联点）
+3. 给出1-10的个人相关性评分（10=完全契合研究方向，1=几乎无关）
+4. 严格按以下格式输出，每行一篇，不要输出其他内容：
+ID|推荐理由|相关性评分"""
 
     try:
         from openai import OpenAI
@@ -87,7 +88,7 @@ ID|推荐理由"""
         resp = client.chat.completions.create(
             model="deepseek-chat",
             timeout=30,
-            max_tokens=300,
+            max_tokens=400,
             messages=[{"role": "user", "content": prompt}]
         )
         id_map = {a["id"]: a for a in candidates}
@@ -95,7 +96,7 @@ ID|推荐理由"""
         for line in resp.choices[0].message.content.strip().split("\n"):
             if "|" not in line:
                 continue
-            parts = line.split("|", 1)
+            parts = line.split("|", 2)
             try:
                 aid = int(parts[0].strip())
             except ValueError:
@@ -103,6 +104,11 @@ ID|推荐理由"""
             if aid in id_map:
                 article = dict(id_map[aid])
                 article["recommend_reason"] = parts[1].strip() if len(parts) > 1 else ""
+                if len(parts) > 2:
+                    try:
+                        article["relevance_score"] = float(parts[2].strip())
+                    except ValueError:
+                        pass
                 result.append(article)
         # 如果LLM返回不足5篇，用原始顺序补齐
         returned_ids = {a["id"] for a in result}
@@ -261,26 +267,51 @@ def build_html(keywords: str, articles: list, date_str: str, xhs_notes: list = N
         source = a.get("source_name") or "未知来源"
         pub = (a.get("published_at") or "")[:10] or "未知日期"
         score = a.get("quality_score") or 0
-
+        relevance_score = a.get("relevance_score")
         reason = a.get("recommend_reason", "")
-        reason_html = (
-            f'<div style="font-size:12px;color:#667eea;margin-bottom:6px;font-weight:500">'
-            f'🎯 为什么推给你：{reason}</div>'
-        ) if reason else ""
+
+        # 有个人相关性评分时，合并展示评分+理由；否则只显示全局质量分
+        if relevance_score is not None and reason:
+            score_bar = int(round(relevance_score))
+            filled = "█" * score_bar + "░" * (10 - score_bar)
+            match_html = (
+                f'<div style="margin-bottom:8px;padding:8px 12px;background:#f0f4ff;'
+                f'border-radius:6px;border-left:3px solid #667eea">'
+                f'<span style="font-size:14px;font-weight:700;color:#667eea">匹配度&nbsp;'
+                f'{relevance_score:.0f}<span style="font-size:11px;color:#a0aec0">/10</span></span>'
+                f'<span style="font-size:11px;color:#667eea;margin-left:8px;letter-spacing:1px">{filled}</span>'
+                f'<div style="font-size:12px;color:#4a5568;margin-top:4px">🎯 {reason}</div>'
+                f'</div>'
+            )
+        elif relevance_score is not None:
+            match_html = (
+                f'<div style="margin-bottom:8px;padding:6px 12px;background:#f0f4ff;'
+                f'border-radius:6px;border-left:3px solid #667eea">'
+                f'<span style="font-size:14px;font-weight:700;color:#667eea">匹配度&nbsp;'
+                f'{relevance_score:.0f}<span style="font-size:11px;color:#a0aec0">/10</span></span>'
+                f'</div>'
+            )
+        else:
+            match_html = ""
+
         summary_html = (
             f'<div style="font-size:13px;font-weight:500;color:#2d3748;margin-bottom:8px;'
             f'line-height:1.6;background:#fffbeb;padding:8px 12px;border-radius:6px;'
             f'border-left:3px solid #f6ad55">💡 {summary}</div>'
         ) if summary else ""
+
+        # 有个人评分时页脚不重复显示质量分
+        score_tag = "" if relevance_score is not None else f"&nbsp;·&nbsp; ⭐ {score:.1f}分"
+
         articles_html += f"""
         <div style="padding:16px 0;border-bottom:1px solid #f0f0f0">
           <div style="font-size:15px;font-weight:600;color:#2d3748;margin-bottom:6px;line-height:1.5">
             <a href="{url}" style="color:#2d3748;text-decoration:none">{i}. {a['title']}</a>
           </div>
           {summary_html}
-          {reason_html}
+          {match_html}
           <div style="font-size:12px;color:#a0aec0">
-            📰 {source} &nbsp;·&nbsp; 📅 {pub} &nbsp;·&nbsp; ⭐ {score:.1f}分
+            📰 {source} &nbsp;·&nbsp; 📅 {pub}{score_tag}
             &nbsp;·&nbsp; <a href="{url}" style="color:#667eea">查看原文 →</a>
           </div>
         </div>"""
@@ -462,10 +493,17 @@ def push_single(email: str, db_path: str = DB_PATH) -> dict:
         except Exception:
             api_key = DEEPSEEK_API_KEY
 
+    research_direction = sub.get("research_direction") or ""
+
     # 扩大到3天，避免今日文章太少
     articles = match_articles(keywords, days=3, db_path=db_path)
     if not articles:
         return {"ok": False, "msg": "近3天内没有匹配文章，无法推送"}
+
+    if research_direction:
+        articles = rerank_articles(articles, research_direction, api_key or DEEPSEEK_API_KEY)
+    else:
+        articles = articles[:5]
 
     articles = generate_summaries(articles, api_key or DEEPSEEK_API_KEY)
 
