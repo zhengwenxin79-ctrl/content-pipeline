@@ -15,10 +15,7 @@ from typing import Optional, List
 DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
 DEEPSEEK_API_KEY  = os.environ.get("DEEPSEEK_API_KEY", "")
 
-# 最小机制图尺寸（像素），太小的图跳过
-MIN_IMG_WIDTH  = 300
-MIN_IMG_HEIGHT = 200
-# 从 PDF 中最多提取多少张候选图（扫描上限）
+# 从 PDF 中最多渲染多少页（扫描上限）
 MAX_IMAGES_PER_PDF = 8
 # 找到几张机制图后停止（通常 1 张就够）
 MAX_ANIM_RESULTS   = 1
@@ -86,8 +83,9 @@ def download_pdf(pdf_url: str, connect_timeout: int = 10,
 
 def extract_images_from_pdf(pdf_bytes: bytes) -> List[bytes]:
     """
-    用 PyMuPDF 从 PDF 中提取图片，过滤掉太小的图（logo、图标等）。
-    返回图片 PNG/JPEG 字节列表，最多 MAX_IMAGES_PER_PDF 张。
+    将 PDF 每页渲染为完整图片（而非仅提取嵌入光栅图）。
+    这样矢量机制图、复合图形都能被 Qwen 看到。
+    返回每页的 JPEG 字节列表，最多 MAX_IMAGES_PER_PDF 页。
     """
     try:
         import fitz  # PyMuPDF
@@ -96,32 +94,14 @@ def extract_images_from_pdf(pdf_bytes: bytes) -> List[bytes]:
 
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     images = []
-    seen_hashes = set()
 
-    for page in doc:
-        for img_info in page.get_images(full=True):
-            xref = img_info[0]
-            try:
-                base_image = doc.extract_image(xref)
-            except Exception:
-                continue
-
-            w, h = base_image.get("width", 0), base_image.get("height", 0)
-            if w < MIN_IMG_WIDTH or h < MIN_IMG_HEIGHT:
-                continue
-
-            img_bytes = base_image["image"]
-            # 去重（同一张图可能出现在多页）
-            digest = hashlib.md5(img_bytes).hexdigest()
-            if digest in seen_hashes:
-                continue
-            seen_hashes.add(digest)
-
-            images.append(img_bytes)
-            if len(images) >= MAX_IMAGES_PER_PDF:
-                break
-        if len(images) >= MAX_IMAGES_PER_PDF:
-            break
+    for page_num in range(min(MAX_IMAGES_PER_PDF, len(doc))):
+        page = doc[page_num]
+        # 150 DPI 渲染，足够 Qwen 识别细节又不超限
+        mat = fitz.Matrix(150 / 72, 150 / 72)
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+        img_bytes = pix.tobytes("jpeg", jpg_quality=85)
+        images.append(img_bytes)
 
     doc.close()
     return images
