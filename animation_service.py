@@ -184,6 +184,47 @@ def _build_qwen_prompt(caption: str = "") -> str:
     return _QWEN_PROMPT_TMPL.format(caption_section=section)
 
 
+def _crop_to_diagram_region(image_bytes: bytes, dr: dict,
+                             nodes: list, pad: float = 0.03) -> tuple:
+    """
+    按 diagram_region 裁剪图片并同步转换节点坐标。
+    pad 为额外留白比例（避免节点热区被裁掉边缘）。
+    裁剪区域过小（<20% 页面）或失败时原样返回。
+    """
+    import copy
+    x1 = max(0.0, dr.get("x1", 0) - pad)
+    y1 = max(0.0, dr.get("y1", 0) - pad)
+    x2 = min(1.0, dr.get("x2", 1) + pad)
+    y2 = min(1.0, dr.get("y2", 1) + pad)
+    w, h = x2 - x1, y2 - y1
+
+    # 区域已接近全页，或范围异常时跳过裁剪
+    if w > 0.9 and h > 0.9:
+        return image_bytes, nodes
+    if w <= 0 or h <= 0:
+        return image_bytes, nodes
+
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(image_bytes))
+        W, H = img.size
+        cropped = img.crop((int(x1 * W), int(y1 * H), int(x2 * W), int(y2 * H)))
+        buf = io.BytesIO()
+        cropped.save(buf, format="JPEG", quality=90)
+
+        # 节点坐标从全页归一化 → 裁剪图归一化
+        new_nodes = []
+        for n in copy.deepcopy(nodes):
+            n["x"] = max(0.01, min(0.99, (n["x"] - x1) / w))
+            n["y"] = max(0.01, min(0.99, (n["y"] - y1) / h))
+            new_nodes.append(n)
+
+        return buf.getvalue(), new_nodes
+    except Exception:
+        return image_bytes, nodes
+
+
 def _compress_image(image_bytes: bytes, max_side: int = 1200, quality: int = 85) -> bytes:
     """将图片压缩到 max_side 长边以内，减少 API 传输量。"""
     try:
@@ -542,18 +583,16 @@ def _build_overlay_html(graph_json: dict, image_bytes: bytes, knowledge: dict) -
     nodes = graph_json.get("nodes", [])
 
     # 利用 diagram_region 做坐标映射：Qwen 的 x/y 是整图坐标，直接使用
-    # diagram_region 仅用于 JS 端显示参考框（可选）
+    # 按 diagram_region 裁剪图片，避免显示整页 PDF 留下大片空白
     dr = graph_json.get("diagram_region", {"x1": 0, "y1": 0, "x2": 1, "y2": 1})
+    image_bytes, nodes = _crop_to_diagram_region(image_bytes, dr, nodes)
 
     img_b64 = base64.b64encode(image_bytes).decode()
-    # 简单检测图片格式
-    mime = "image/jpeg" if image_bytes[:3] == b"\xff\xd8\xff" else "image/png"
+    mime = "image/jpeg"
 
     color_map = {
-        # 生物类
         "protein": "#667eea", "molecule": "#48bb78", "cell": "#9f7aea",
         "drug": "#f6ad55",   "process": "#4299e1",  "organ": "#ed8936",
-        # CS 类
         "module": "#667eea", "data": "#48bb78", "operation": "#f6ad55",
         "input": "#68d391",  "output": "#fc8181",
     }

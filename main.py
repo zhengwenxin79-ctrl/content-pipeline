@@ -32,6 +32,13 @@ def cmd_score(args):
     score_articles(limit=args.limit, db_path=args.db)
 
 
+def cmd_score_users(args):
+    from db import migrate_research_directions
+    from analyze import score_articles_for_all_users
+    migrate_research_directions(db_path=args.db)
+    score_articles_for_all_users(db_path=args.db)
+
+
 def cmd_titles(args):
     from analyze import recommend_titles
     recommend_titles(topic=args.topic, db_path=args.db)
@@ -103,16 +110,22 @@ def cmd_daily(args):
     from analyze import score_articles
     score_articles(limit=30, db_path=args.db)
 
-    print("\n[3/4] 生成标题建议...")
+    print("\n[3/5] 用户个性化评分...")
+    from db import migrate_research_directions
+    from analyze import score_articles_for_all_users
+    migrate_research_directions(db_path=args.db)
+    score_articles_for_all_users(db_path=args.db)
+
+    print("\n[4/5] 生成标题建议...")
     from analyze import recommend_titles
     recommend_titles(topic=args.topic, db_path=args.db)
 
-    print("\n[4/4] 关键词订阅推送...")
+    print("\n[5/5] 关键词订阅推送...")
     from mailer import run_daily_push
     run_daily_push(db_path=args.db)
 
     print("\n" + "=" * 50)
-    print("✓ 每日Pipeline完成！")
+    print("✓ 每日Pipeline完成！（fetch → score → score-users → titles → push）")
     print("下一步：选择一个标题，运行 python generate.py 生成初稿")
 
 
@@ -135,6 +148,9 @@ def main():
     # score
     p_score = subparsers.add_parser("score", help="AI评分筛选文章")
     p_score.add_argument("--limit", type=int, default=20)
+
+    # score-users
+    subparsers.add_parser("score-users", help="按用户研究档案打个性化相关性分")
 
     # titles
     p_titles = subparsers.add_parser("titles", help="AI推荐标题候选")
@@ -177,6 +193,7 @@ def main():
         "fetch": cmd_fetch,
         "enrich": cmd_enrich,
         "score": cmd_score,
+        "score-users": cmd_score_users,
         "titles": cmd_titles,
         "digest": cmd_digest,
         "import-post": cmd_import_post,

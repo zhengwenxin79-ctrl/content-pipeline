@@ -283,6 +283,139 @@ def recommend_titles(topic: str = None, db_path: str = "corpus/corpus.db") -> in
         return -1
 
 
+def expand_research_direction(direction: str, api_key: str = "") -> list:
+    """将自然语言研究方向展开为 10-15 个英文检索关键词，覆盖核心技术、相关方法和上位概念。"""
+    key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
+    if not key or not direction.strip():
+        return []
+    client = OpenAI(api_key=key, base_url="https://api.deepseek.com")
+    prompt = f"""将以下研究方向展开为10-15个英文学术检索关键词，覆盖核心技术、相关方法、应用场景和上位概念。
+研究方向：{direction}
+只输出JSON数组，例如：["keyword1", "keyword2", ...]，不要任何说明文字。"""
+    try:
+        resp = client.chat.completions.create(
+            model="deepseek-chat", timeout=30, max_tokens=300,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        text = resp.choices[0].message.content.strip()
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        return json.loads(text)
+    except Exception as e:
+        print(f"⚠ 关键词展开失败: {e}")
+        return []
+
+
+def score_articles_for_profile(profile_id: int, direction: str,
+                                expanded_keywords: list = None,
+                                api_key: str = "", limit: int = 50,
+                                db_path: str = "corpus/corpus.db") -> int:
+    """为单个研究档案对尚未个性化评分的高质量文章打分，返回已评分篇数。"""
+    from db import get_conn, save_user_relevance
+
+    key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
+    if not key:
+        return 0
+
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT a.id, a.title, a.content
+        FROM articles a
+        WHERE a.quality_score >= 5.0
+          AND a.id NOT IN (
+              SELECT article_id FROM user_article_relevance WHERE profile_id=?
+          )
+        ORDER BY a.fetched_at DESC
+        LIMIT ?
+    """, (profile_id, limit)).fetchall()
+    conn.close()
+
+    articles = [dict(r) for r in rows]
+    if not articles:
+        return 0
+
+    client = OpenAI(api_key=key, base_url="https://api.deepseek.com")
+    kw_hint = f"\n相关关键词：{', '.join((expanded_keywords or [])[:10])}" if expanded_keywords else ""
+
+    BATCH = 25
+    scored = 0
+    for i in range(0, len(articles), BATCH):
+        batch = articles[i:i + BATCH]
+        lines = "\n".join(
+            f'{a["id"]}|{a["title"]}|{(a.get("content") or "")[:150]}'
+            for a in batch
+        )
+        prompt = f"""你是科研助手。根据用户研究方向，对以下论文逐篇给出个人相关性评分。
+
+用户研究方向：{direction}{kw_hint}
+
+候选论文（ID|标题|摘要片段）：
+{lines}
+
+评分标准（1-10）：9-10核心相关，7-8高度相关，4-6部分相关，1-3关联较弱。
+每行输出一篇：ID|评分|理由（15字以内）
+只输出数据行，不要任何其他文字。"""
+        try:
+            resp = client.chat.completions.create(
+                model="deepseek-chat", timeout=60, max_tokens=800,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            for line in resp.choices[0].message.content.strip().split("\n"):
+                if "|" not in line:
+                    continue
+                parts = line.split("|", 2)
+                try:
+                    aid = int(parts[0].strip())
+                    score = float(parts[1].strip())
+                    reason = parts[2].strip() if len(parts) > 2 else ""
+                    save_user_relevance(profile_id, aid, score, reason, db_path=db_path)
+                    scored += 1
+                except (ValueError, IndexError):
+                    continue
+        except Exception as e:
+            print(f"  ⚠ 批量评分失败 (batch {i}): {e}")
+
+    return scored
+
+
+def score_articles_for_all_users(db_path: str = "corpus/corpus.db"):
+    """为所有活跃研究档案执行个性化评分。"""
+    import base64
+    from db import get_conn, get_active_subscriptions
+
+    subs = get_active_subscriptions(db_path=db_path)
+    email_to_key = {}
+    for sub in subs:
+        if sub.get("api_key"):
+            try:
+                email_to_key[sub["email"]] = base64.b64decode(sub["api_key"]).decode()
+            except Exception:
+                pass
+
+    conn = get_conn(db_path)
+    profiles = [dict(r) for r in conn.execute(
+        "SELECT * FROM user_research_profiles WHERE active=1"
+    ).fetchall()]
+    conn.close()
+
+    if not profiles:
+        print("没有活跃的研究档案")
+        return
+
+    print(f"共 {len(profiles)} 个研究档案需要个性化评分...")
+    total = 0
+    for p in profiles:
+        api_key = email_to_key.get(p["sub_email"], "")
+        expanded = json.loads(p.get("expanded_keywords") or "[]")
+        print(f"\n▶ [{p['name']}] {p['sub_email']} ({p['direction'][:40]}...)")
+        n = score_articles_for_profile(
+            p["id"], p["direction"], expanded, api_key, db_path=db_path
+        )
+        print(f"  → 完成 {n} 篇")
+        total += n
+
+    print(f"\n✓ 个性化评分完成，共 {total} 篇")
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="AI分析模块")

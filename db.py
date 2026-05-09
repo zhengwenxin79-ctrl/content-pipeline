@@ -97,6 +97,20 @@ def init_db(db_path: str = "corpus/corpus.db"):
         CREATE INDEX IF NOT EXISTS idx_my_posts_engagement ON my_posts(engagement_score DESC);
         CREATE INDEX IF NOT EXISTS idx_subscriptions_active ON subscriptions(active);
 
+        -- 研究档案（每用户可有多个）
+        CREATE TABLE IF NOT EXISTS user_research_profiles (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            sub_email   TEXT NOT NULL,
+            name        TEXT NOT NULL DEFAULT '我的研究方向',
+            direction   TEXT NOT NULL,
+            expanded_keywords TEXT DEFAULT '[]',
+            direction_hash TEXT NOT NULL DEFAULT '',
+            active      INTEGER DEFAULT 1,
+            created_at  TEXT DEFAULT (datetime('now')),
+            updated_at  TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_profiles_email ON user_research_profiles(sub_email);
+
         -- 用户账号表
         CREATE TABLE IF NOT EXISTS users (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -184,6 +198,16 @@ def init_db(db_path: str = "corpus/corpus.db"):
             UNIQUE(article_id, image_hash)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_animations_article ON article_animations(article_id)",
+        """CREATE TABLE IF NOT EXISTS user_article_relevance (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_id      INTEGER NOT NULL,
+            article_id      INTEGER NOT NULL,
+            relevance_score REAL DEFAULT 0.0,
+            recommend_reason TEXT DEFAULT '',
+            scored_at       TEXT DEFAULT (datetime('now')),
+            UNIQUE(profile_id, article_id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_relevance_profile ON user_article_relevance(profile_id)",
     ]
     for sql in migrations:
         try:
@@ -785,5 +809,168 @@ def get_animation_html(animation_id: int,
             (animation_id,)
         ).fetchone()
         return row["animation_html"] if row else None
+    finally:
+        conn.close()
+
+
+# ── user_research_profiles ────────────────────────────
+
+def _direction_hash(direction: str) -> str:
+    return hashlib.md5(direction.strip().encode()).hexdigest()[:8]
+
+
+def create_research_profile(email: str, name: str, direction: str,
+                             expanded_keywords: list = None,
+                             db_path: str = "corpus/corpus.db") -> int:
+    conn = get_conn(db_path)
+    try:
+        cursor = conn.execute("""
+            INSERT INTO user_research_profiles
+                (sub_email, name, direction, expanded_keywords, direction_hash)
+            VALUES (?,?,?,?,?)
+        """, (email, name, direction,
+              json.dumps(expanded_keywords or [], ensure_ascii=False),
+              _direction_hash(direction)))
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def update_research_profile(profile_id: int, email: str,
+                             name: str = None, direction: str = None,
+                             expanded_keywords: list = None,
+                             db_path: str = "corpus/corpus.db") -> dict:
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT id FROM user_research_profiles WHERE id=? AND sub_email=?",
+            (profile_id, email)
+        ).fetchone()
+        if not row:
+            return {"ok": False, "msg": "档案不存在"}
+
+        updates, params = [], []
+        if name is not None:
+            updates.append("name=?"); params.append(name)
+        if direction is not None:
+            updates.append("direction=?"); params.append(direction)
+            updates.append("direction_hash=?"); params.append(_direction_hash(direction))
+            conn.execute("DELETE FROM user_article_relevance WHERE profile_id=?",
+                         (profile_id,))
+        if expanded_keywords is not None:
+            updates.append("expanded_keywords=?")
+            params.append(json.dumps(expanded_keywords, ensure_ascii=False))
+        if updates:
+            updates.append("updated_at=datetime('now')")
+            params.extend([profile_id, email])
+            conn.execute(
+                f"UPDATE user_research_profiles SET {', '.join(updates)} WHERE id=? AND sub_email=?",
+                params
+            )
+            conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+def delete_research_profile(profile_id: int, email: str,
+                             db_path: str = "corpus/corpus.db") -> dict:
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "UPDATE user_research_profiles SET active=0, updated_at=datetime('now') WHERE id=? AND sub_email=?",
+            (profile_id, email)
+        )
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+def get_research_profiles(email: str, db_path: str = "corpus/corpus.db") -> list:
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM user_research_profiles WHERE sub_email=? AND active=1 ORDER BY created_at",
+            (email,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def save_user_relevance(profile_id: int, article_id: int,
+                        relevance_score: float, recommend_reason: str = "",
+                        db_path: str = "corpus/corpus.db"):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""
+            INSERT INTO user_article_relevance
+                (profile_id, article_id, relevance_score, recommend_reason)
+            VALUES (?,?,?,?)
+            ON CONFLICT(profile_id, article_id) DO UPDATE SET
+                relevance_score=excluded.relevance_score,
+                recommend_reason=excluded.recommend_reason,
+                scored_at=datetime('now')
+        """, (profile_id, article_id, relevance_score, recommend_reason))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_user_relevance_batch(profile_ids: list, article_ids: list,
+                              db_path: str = "corpus/corpus.db") -> dict:
+    """返回 {article_id: {"score", "reason", "profile_id"}}，多 profile 取最高分"""
+    if not profile_ids or not article_ids:
+        return {}
+    conn = get_conn(db_path)
+    try:
+        p_ph = ",".join("?" * len(profile_ids))
+        a_ph = ",".join("?" * len(article_ids))
+        rows = conn.execute(f"""
+            SELECT profile_id, article_id, relevance_score, recommend_reason
+            FROM user_article_relevance
+            WHERE profile_id IN ({p_ph}) AND article_id IN ({a_ph})
+        """, list(profile_ids) + list(article_ids)).fetchall()
+        result = {}
+        for r in rows:
+            aid = r["article_id"]
+            if aid not in result or r["relevance_score"] > result[aid]["score"]:
+                result[aid] = {
+                    "score": r["relevance_score"],
+                    "reason": r["recommend_reason"],
+                    "profile_id": r["profile_id"],
+                }
+        return result
+    finally:
+        conn.close()
+
+
+def migrate_research_directions(db_path: str = "corpus/corpus.db"):
+    """将 subscriptions.research_direction 迁移为 user_research_profiles（幂等）"""
+    conn = get_conn(db_path)
+    try:
+        subs = conn.execute(
+            "SELECT email, research_direction FROM subscriptions "
+            "WHERE research_direction IS NOT NULL AND research_direction != ''"
+        ).fetchall()
+        migrated = 0
+        for sub in subs:
+            exists = conn.execute(
+                "SELECT id FROM user_research_profiles WHERE sub_email=?",
+                (sub["email"],)
+            ).fetchone()
+            if not exists:
+                conn.execute(
+                    "INSERT INTO user_research_profiles (sub_email, name, direction, direction_hash) "
+                    "VALUES (?,?,?,?)",
+                    (sub["email"], "我的研究方向", sub["research_direction"],
+                     _direction_hash(sub["research_direction"]))
+                )
+                migrated += 1
+        conn.commit()
+        if migrated:
+            print(f"✓ 迁移了 {migrated} 条旧研究方向到档案表")
     finally:
         conn.close()

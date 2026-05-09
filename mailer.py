@@ -49,25 +49,52 @@ def _build_xhs_queries(keywords: str) -> list:
     return list(dict.fromkeys(queries))  # 去重保序
 
 
-def rerank_articles(articles: list, research_direction: str, api_key: str = "") -> list:
+def rerank_articles(articles: list, research_direction: str,
+                    api_key: str = "", sub_email: str = "") -> list:
     """
-    用 LLM 按用户研究方向对候选文章重排序，返回 Top 5，每篇附推荐理由。
-    如果重排失败，原样返回前5篇（保证推送不中断）。
+    按用户研究方向对候选文章排序，优先使用预计算的个人评分，否则实时调用 LLM。
+    失败时原样返回前5篇。
     """
     if not research_direction or not articles:
         return articles[:5]
 
+    # 优先读预计算评分
+    if sub_email:
+        from db import get_research_profiles, get_user_relevance_batch
+        profiles = get_research_profiles(sub_email)
+        if profiles:
+            profile_ids = [p["id"] for p in profiles]
+            profile_name_map = {p["id"]: p["name"] for p in profiles}
+            article_ids = [a["id"] for a in articles[:30]]
+            precomputed = get_user_relevance_batch(profile_ids, article_ids)
+            if len(precomputed) >= min(3, len(articles)):
+                for a in articles:
+                    rel = precomputed.get(a["id"])
+                    if rel:
+                        a["relevance_score"] = rel["score"]
+                        a["recommend_reason"] = rel["reason"]
+                        a["matched_profile"] = profile_name_map.get(rel["profile_id"], "")
+                ranked = sorted(
+                    [a for a in articles if a.get("relevance_score") is not None],
+                    key=lambda x: x["relevance_score"], reverse=True
+                )
+                seen = {a["id"] for a in ranked}
+                for a in articles:
+                    if a["id"] not in seen:
+                        ranked.append(a)
+                print(f"  → 使用预计算评分，跳过 LLM 重排序")
+                return ranked[:5]
+
+    # 无预计算评分，实时调用 LLM
     key = api_key or DEEPSEEK_API_KEY
     if not key:
         return articles[:5]
 
-    candidates = articles[:30]  # 最多取30篇喂给LLM，控制token消耗
-    lines = []
-    for a in candidates:
-        summary = (a.get("content") or a.get("summary") or "")[:200]
-        lines.append(f'{a["id"]}|{a["title"]}|{summary}')
-    candidates_text = "\n".join(lines)
-
+    candidates = articles[:30]
+    candidates_text = "\n".join(
+        f'{a["id"]}|{a["title"]}|{(a.get("content") or a.get("summary") or "")[:200]}'
+        for a in candidates
+    )
     prompt = f"""你是一位科研助手，请根据用户的研究方向，从以下候选论文中挑出最相关的5篇。
 
 用户研究方向：{research_direction}
@@ -86,9 +113,7 @@ ID|推荐理由|相关性评分"""
         from openai import OpenAI
         client = OpenAI(api_key=key, base_url="https://api.deepseek.com")
         resp = client.chat.completions.create(
-            model="deepseek-chat",
-            timeout=30,
-            max_tokens=400,
+            model="deepseek-chat", timeout=30, max_tokens=400,
             messages=[{"role": "user", "content": prompt}]
         )
         id_map = {a["id"]: a for a in candidates}
@@ -110,7 +135,6 @@ ID|推荐理由|相关性评分"""
                     except ValueError:
                         pass
                 result.append(article)
-        # 如果LLM返回不足5篇，用原始顺序补齐
         returned_ids = {a["id"] for a in result}
         for a in candidates:
             if len(result) >= 5:
@@ -122,6 +146,73 @@ ID|推荐理由|相关性评分"""
     except Exception as e:
         print(f"  ⚠ LLM重排序失败，使用原始排序: {e}")
         return articles[:5]
+
+
+def build_tiered_articles(sub_email: str, candidates: list,
+                          db_path: str = DB_PATH) -> list:
+    """
+    用预计算的个人评分将候选文章分三层：精准匹配 / 扩展视野 / 领域前沿。
+    总量保持 5-7 篇，始终不为空。
+    无研究档案时直接返回 quality_score 前5篇。
+    """
+    from db import get_research_profiles, get_user_relevance_batch
+
+    profiles = get_research_profiles(sub_email, db_path=db_path)
+    if not profiles:
+        return candidates[:5]
+
+    profile_ids = [p["id"] for p in profiles]
+    profile_name_map = {p["id"]: p["name"] for p in profiles}
+    article_ids = [a["id"] for a in candidates]
+    rel_map = get_user_relevance_batch(profile_ids, article_ids, db_path=db_path)
+
+    for a in candidates:
+        rel = rel_map.get(a["id"])
+        if rel:
+            a["relevance_score"] = rel["score"]
+            a["recommend_reason"] = rel["reason"]
+            a["matched_profile"] = profile_name_map.get(rel["profile_id"], "")
+
+    tier1 = sorted(
+        [a for a in candidates if a.get("relevance_score", 0) >= 7],
+        key=lambda x: x["relevance_score"], reverse=True
+    )
+    tier2 = sorted(
+        [a for a in candidates
+         if 3 <= a.get("relevance_score", 0) < 7 and (a.get("quality_score") or 0) >= 7],
+        key=lambda x: (x["relevance_score"], x.get("quality_score", 0)), reverse=True
+    )
+    tier3_pool = sorted(
+        [a for a in candidates if a.get("relevance_score") is None],
+        key=lambda x: x.get("quality_score", 0), reverse=True
+    )
+
+    result = []
+    seen = set()
+
+    for a in tier1[:3]:
+        a["tier"] = "🎯 精准匹配"
+        result.append(a); seen.add(a["id"])
+
+    for a in tier2:
+        if len([r for r in result if "精准" in r.get("tier", "") or "扩展" in r.get("tier", "")]) >= 3:
+            break
+        if a["id"] not in seen:
+            a["tier"] = "🔭 扩展视野"
+            result.append(a); seen.add(a["id"])
+
+    for a in tier3_pool:
+        if len(result) >= 7:
+            break
+        if a["id"] not in seen:
+            a["tier"] = "📡 领域前沿"
+            result.append(a); seen.add(a["id"])
+
+    # 兜底：如果什么都没有，返回 quality 前5
+    if not result:
+        return candidates[:5]
+
+    return result
 
 
 def fetch_xhs_for_keywords(keywords: str, cookie: str = "", candidate_pool: int = 5) -> list:
@@ -254,59 +345,54 @@ def generate_summaries(articles: list, api_key: str) -> list:
 
 # ── HTML邮件模板 ───────────────────────────────────────────────
 
-def build_html(keywords: str, articles: list, date_str: str, xhs_notes: list = None) -> str:
-    kw_tags = "".join([
-        f'<span style="background:#ebf4ff;color:#3182ce;padding:2px 8px;border-radius:12px;font-size:12px;margin-right:6px">{k.strip()}</span>'
-        for k in keywords.split(",") if k.strip()
-    ])
+def _render_article_card(idx: int, a: dict) -> str:
+    summary = a.get("summary", "")
+    url = a.get("url") or "#"
+    source = a.get("source_name") or "未知来源"
+    pub = (a.get("published_at") or "")[:10] or "未知日期"
+    score = a.get("quality_score") or 0
+    relevance_score = a.get("relevance_score")
+    reason = a.get("recommend_reason", "")
+    profile_name = a.get("matched_profile", "")
 
-    articles_html = ""
-    for i, a in enumerate(articles, 1):
-        summary = a.get("summary", "")
-        url = a.get("url") or "#"
-        source = a.get("source_name") or "未知来源"
-        pub = (a.get("published_at") or "")[:10] or "未知日期"
-        score = a.get("quality_score") or 0
-        relevance_score = a.get("relevance_score")
-        reason = a.get("recommend_reason", "")
+    if relevance_score is not None and reason:
+        score_bar = int(round(relevance_score))
+        filled = "█" * score_bar + "░" * (10 - score_bar)
+        profile_tag = (f'<span style="font-size:11px;color:#a0aec0;margin-left:6px">'
+                       f'· {profile_name}</span>') if profile_name else ""
+        match_html = (
+            f'<div style="margin-bottom:8px;padding:8px 12px;background:#f0f4ff;'
+            f'border-radius:6px;border-left:3px solid #667eea">'
+            f'<span style="font-size:14px;font-weight:700;color:#667eea">匹配度&nbsp;'
+            f'{relevance_score:.0f}<span style="font-size:11px;color:#a0aec0">/10</span></span>'
+            f'<span style="font-size:11px;color:#667eea;margin-left:8px;letter-spacing:1px">{filled}</span>'
+            f'{profile_tag}'
+            f'<div style="font-size:12px;color:#4a5568;margin-top:4px">💬 {reason}</div>'
+            f'</div>'
+        )
+    elif relevance_score is not None:
+        match_html = (
+            f'<div style="margin-bottom:8px;padding:6px 12px;background:#f0f4ff;'
+            f'border-radius:6px;border-left:3px solid #667eea">'
+            f'<span style="font-size:14px;font-weight:700;color:#667eea">匹配度&nbsp;'
+            f'{relevance_score:.0f}<span style="font-size:11px;color:#a0aec0">/10</span></span>'
+            f'</div>'
+        )
+    else:
+        match_html = ""
 
-        # 有个人相关性评分时，合并展示评分+理由；否则只显示全局质量分
-        if relevance_score is not None and reason:
-            score_bar = int(round(relevance_score))
-            filled = "█" * score_bar + "░" * (10 - score_bar)
-            match_html = (
-                f'<div style="margin-bottom:8px;padding:8px 12px;background:#f0f4ff;'
-                f'border-radius:6px;border-left:3px solid #667eea">'
-                f'<span style="font-size:14px;font-weight:700;color:#667eea">匹配度&nbsp;'
-                f'{relevance_score:.0f}<span style="font-size:11px;color:#a0aec0">/10</span></span>'
-                f'<span style="font-size:11px;color:#667eea;margin-left:8px;letter-spacing:1px">{filled}</span>'
-                f'<div style="font-size:12px;color:#4a5568;margin-top:4px">🎯 {reason}</div>'
-                f'</div>'
-            )
-        elif relevance_score is not None:
-            match_html = (
-                f'<div style="margin-bottom:8px;padding:6px 12px;background:#f0f4ff;'
-                f'border-radius:6px;border-left:3px solid #667eea">'
-                f'<span style="font-size:14px;font-weight:700;color:#667eea">匹配度&nbsp;'
-                f'{relevance_score:.0f}<span style="font-size:11px;color:#a0aec0">/10</span></span>'
-                f'</div>'
-            )
-        else:
-            match_html = ""
+    summary_html = (
+        f'<div style="font-size:13px;font-weight:500;color:#2d3748;margin-bottom:8px;'
+        f'line-height:1.6;background:#fffbeb;padding:8px 12px;border-radius:6px;'
+        f'border-left:3px solid #f6ad55">💡 {summary}</div>'
+    ) if summary else ""
 
-        summary_html = (
-            f'<div style="font-size:13px;font-weight:500;color:#2d3748;margin-bottom:8px;'
-            f'line-height:1.6;background:#fffbeb;padding:8px 12px;border-radius:6px;'
-            f'border-left:3px solid #f6ad55">💡 {summary}</div>'
-        ) if summary else ""
+    score_tag = "" if relevance_score is not None else f"&nbsp;·&nbsp; ⭐ {score:.1f}分"
 
-        # 有个人评分时页脚不重复显示质量分
-        score_tag = "" if relevance_score is not None else f"&nbsp;·&nbsp; ⭐ {score:.1f}分"
-
-        articles_html += f"""
+    return f"""
         <div style="padding:16px 0;border-bottom:1px solid #f0f0f0">
           <div style="font-size:15px;font-weight:600;color:#2d3748;margin-bottom:6px;line-height:1.5">
-            <a href="{url}" style="color:#2d3748;text-decoration:none">{i}. {a['title']}</a>
+            <a href="{url}" style="color:#2d3748;text-decoration:none">{idx}. {a['title']}</a>
           </div>
           {summary_html}
           {match_html}
@@ -315,6 +401,47 @@ def build_html(keywords: str, articles: list, date_str: str, xhs_notes: list = N
             &nbsp;·&nbsp; <a href="{url}" style="color:#667eea">查看原文 →</a>
           </div>
         </div>"""
+
+
+def build_html(keywords: str, articles: list, date_str: str, xhs_notes: list = None) -> str:
+    kw_tags = "".join([
+        f'<span style="background:#ebf4ff;color:#3182ce;padding:2px 8px;border-radius:12px;font-size:12px;margin-right:6px">{k.strip()}</span>'
+        for k in keywords.split(",") if k.strip()
+    ])
+
+    # 如果文章带有 tier 字段，按层分组展示；否则原样列表
+    has_tiers = any(a.get("tier") for a in articles)
+    articles_html = ""
+
+    if has_tiers:
+        from collections import OrderedDict
+        tier_order = ["🎯 精准匹配", "🔭 扩展视野", "📡 领域前沿"]
+        groups: dict = OrderedDict((t, []) for t in tier_order)
+        for a in articles:
+            tier = a.get("tier", "📡 领域前沿")
+            if tier not in groups:
+                groups[tier] = []
+            groups[tier].append(a)
+
+        global_idx = 1
+        for tier_label, items in groups.items():
+            if not items:
+                continue
+            tier_color = {"🎯 精准匹配": "#553c9a", "🔭 扩展视野": "#2b6cb0", "📡 领域前沿": "#276749"}.get(tier_label, "#4a5568")
+            articles_html += (
+                f'<div style="margin:16px 0 8px;padding:6px 12px;background:#f7fafc;'
+                f'border-radius:8px;border-left:4px solid {tier_color}">'
+                f'<span style="font-size:13px;font-weight:700;color:{tier_color}">'
+                f'{tier_label}</span>'
+                f'<span style="font-size:12px;color:#a0aec0;margin-left:6px">{len(items)} 篇</span>'
+                f'</div>'
+            )
+            for a in items:
+                articles_html += _render_article_card(global_idx, a)
+                global_idx += 1
+    else:
+        for i, a in enumerate(articles, 1):
+            articles_html += _render_article_card(i, a)
 
     if not articles_html:
         articles_html = '<div style="text-align:center;padding:32px;color:#a0aec0">今日暂无匹配文章</div>'
@@ -437,8 +564,6 @@ def run_daily_push(db_path: str = DB_PATH):
 
         research_direction = sub.get("research_direction") or ""
         print(f"  处理: {email} | 关键词: {keywords}")
-        if research_direction:
-            print(f"  研究方向: {research_direction[:40]}...")
 
         # 匹配文章（初筛）
         articles = match_articles(keywords, days=1, db_path=db_path)
@@ -446,9 +571,15 @@ def run_daily_push(db_path: str = DB_PATH):
             print(f"  → 今日无匹配文章，跳过")
             continue
 
-        # LLM 重排序（有研究方向时启用）
-        if research_direction:
-            articles = rerank_articles(articles, research_direction, api_key or DEEPSEEK_API_KEY)
+        # 分层推送（有研究档案时优先用预计算评分）
+        from db import get_research_profiles
+        profiles = get_research_profiles(email, db_path=db_path)
+        if profiles:
+            articles = build_tiered_articles(email, articles, db_path=db_path)
+            print(f"  → 分层推送：{len(articles)} 篇")
+        elif research_direction:
+            articles = rerank_articles(articles, research_direction,
+                                       api_key or DEEPSEEK_API_KEY, sub_email=email)
         else:
             articles = articles[:10]
 
@@ -500,8 +631,13 @@ def push_single(email: str, db_path: str = DB_PATH) -> dict:
     if not articles:
         return {"ok": False, "msg": "近3天内没有匹配文章，无法推送"}
 
-    if research_direction:
-        articles = rerank_articles(articles, research_direction, api_key or DEEPSEEK_API_KEY)
+    from db import get_research_profiles
+    profiles = get_research_profiles(email, db_path=db_path)
+    if profiles:
+        articles = build_tiered_articles(email, articles, db_path=db_path)
+    elif research_direction:
+        articles = rerank_articles(articles, research_direction,
+                                   api_key or DEEPSEEK_API_KEY, sub_email=email)
     else:
         articles = articles[:5]
 
