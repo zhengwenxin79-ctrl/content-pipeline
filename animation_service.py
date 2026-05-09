@@ -6,6 +6,7 @@
 
 import os
 import re
+import html as _html
 import base64
 import json
 import hashlib
@@ -111,19 +112,27 @@ def extract_page_captions(pdf_bytes: bytes, max_pages: int = None) -> list:
     """
     从 PDF 每页提取 Figure/Fig. 开头的图注文字。
     返回与 extract_images_from_pdf 等长的列表，无图注时为空字符串。
+
+    Bug D 修复：原正则用 re.DOTALL 会让 .{10,300} 跨段落贪婪抓取，
+    把多面板图（Fig 1a/b/c）后续段落甚至下一图注混成一段。
+    现按段落（连续两行换行）切块，找到含 "Figure N" 的段落，选最长的一条。
     """
-    import fitz, re
+    import fitz
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     n = min(max_pages or MAX_IMAGES_PER_PDF, len(doc))
     captions = []
+    head_pat = re.compile(r'(?im)^\s*(?:Figure|Fig\.|Fig\b)\s*\d+\s*[.:|\-]?')
     for i in range(n):
         text = doc[i].get_text()
-        matches = re.findall(
-            r'(?:Figure|Fig\.)\s*\d+[.:]?\s*.{10,300}',
-            text, re.IGNORECASE | re.DOTALL
-        )
-        # 取第一条，去除多余空白，截断到 400 字符
-        caption = re.sub(r'\s+', ' ', matches[0]).strip()[:400] if matches else ""
+        # 按空行切段（PDF 文本中段落间一般会有空行）
+        paragraphs = re.split(r'\n\s*\n', text)
+        candidates = [p for p in paragraphs if head_pat.search(p)]
+        if not candidates:
+            captions.append("")
+            continue
+        # 选最长的一条作为信息量最大的 caption；多余空白合并、截断到 500 字符
+        best = max(candidates, key=len)
+        caption = re.sub(r'\s+', ' ', best).strip()[:500]
         captions.append(caption)
     doc.close()
     return captions
@@ -288,22 +297,34 @@ def analyze_image_with_qwen(image_bytes: bytes, caption: str = "",
     b64 = base64.b64encode(image_bytes).decode()
     mime = "image/jpeg"
 
-    resp = client.chat.completions.create(
-        model="qwen2.5-vl-72b-instruct",
-        timeout=90,
-        temperature=0,
-        max_tokens=4000,
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-                {"type": "text", "text": _build_qwen_prompt(caption, fallback=fallback)},
-            ],
-        }],
-    )
-
-    text = resp.choices[0].message.content.strip()
-    return _extract_json(text)
+    # Bug G：Qwen 偶发 Connection error / 5xx，瞬时网络抖动应重试一次再放弃。
+    import time as _time
+    last_err = None
+    for attempt in range(2):
+        try:
+            resp = client.chat.completions.create(
+                model="qwen2.5-vl-72b-instruct",
+                timeout=90,
+                temperature=0,
+                max_tokens=4000,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                        {"type": "text", "text": _build_qwen_prompt(caption, fallback=fallback)},
+                    ],
+                }],
+            )
+            text = resp.choices[0].message.content.strip()
+            return _extract_json(text)
+        except Exception as e:
+            last_err = e
+            if attempt == 0:
+                print(f"[qwen] 调用失败，3秒后重试一次：{e}")
+                _time.sleep(3)
+                continue
+            raise
+    raise last_err  # 不会到达，类型补全
 
 
 # ── Pass-2 坐标校准 ────────────────────────────────────────────────────────────
@@ -387,6 +408,27 @@ def _verify_node_positions(image_bytes: bytes, nodes: list) -> list:
 
     print(f"[verify] 校准完成，{changed}/{len(nodes)} 个节点坐标被修正")
     return refined
+
+
+def _normalize_node_ids(graph: dict) -> dict:
+    """
+    去重 Qwen 返回的节点 id，重复的加 _2/_3 后缀以保证 DOM id 唯一。
+    edges 中的引用按首次出现的 id 解析（重复节点在边图中不被引用，但仍能在 UI 上渲染和点击）。
+    """
+    nodes = graph.get("nodes", [])
+    if not nodes:
+        return graph
+    seen = {}
+    new_nodes = []
+    for n in nodes:
+        nid = n.get("id") or f"n{len(new_nodes)+1}"
+        if nid in seen:
+            seen[nid] += 1
+            nid = f"{nid}_{seen[nid]}"
+        else:
+            seen[nid] = 1
+        new_nodes.append({**n, "id": nid})
+    return {**graph, "nodes": new_nodes}
 
 
 def _extract_json(text: str) -> dict:
@@ -614,10 +656,32 @@ def _build_overlay_html(graph_json: dict, image_bytes: bytes, knowledge: dict) -
         "input": "#68d391",  "output": "#fc8181",
     }
 
-    nodes_js     = json.dumps(nodes,     ensure_ascii=False)
-    knowledge_js = json.dumps(knowledge, ensure_ascii=False)
-    color_map_js = json.dumps(color_map)
-    dr_js        = json.dumps(dr)
+    # Bug C：转义所有外部字段，防止 Qwen/DeepSeek 输出含 < & 等字符破坏 HTML 或注入
+    def _esc_str(v):
+        return _html.escape(str(v)) if v is not None else ""
+
+    def _esc_node(n):
+        return {**n,
+                "label":    _esc_str(n.get("label", "")),
+                "label_zh": _esc_str(n.get("label_zh", "")),
+                "type":     _esc_str(n.get("type", ""))}
+
+    nodes_safe = [_esc_node(n) for n in nodes]
+    knowledge_safe = {
+        k: {kk: _esc_str(vv) for kk, vv in (v or {}).items()}
+        for k, v in (knowledge or {}).items()
+    }
+    title_safe = _esc_str(title)
+    desc_safe  = _esc_str(desc).replace("\n", "<br>")
+
+    # JSON 嵌入到 <script> 中，需把 </ 转义防止字符串中出现 </script> 提前关闭
+    def _safe_json(obj):
+        return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
+
+    nodes_js     = _safe_json(nodes_safe)
+    knowledge_js = _safe_json(knowledge_safe)
+    color_map_js = _safe_json(color_map)
+    dr_js        = _safe_json(dr)
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
@@ -684,14 +748,14 @@ body{{font-family:-apple-system,"PingFang SC",sans-serif;background:#f8fafc;colo
 </head>
 <body>
 <div class="toolbar">
-  <span class="toolbar-title">🔬 {title}</span>
+  <span class="toolbar-title">🔬 {title_safe}</span>
   <button class="play-btn" id="playBtn" onclick="togglePlay()">▶ 逐步播放</button>
   <button class="collapse-btn" id="collapseBtn" onclick="toggleCollapse()">▲ 折叠</button>
 </div>
 <div class="main" id="mainArea">
   <div class="img-scroll" id="imgScroll">
     <div class="img-positioner" id="imgPos">
-      <img src="data:{mime};base64,{img_b64}" id="mainImg" onload="initHotspots()" alt="{title}">
+      <img src="data:{mime};base64,{img_b64}" id="mainImg" onload="initHotspots()" alt="{title_safe}">
       <div id="hotspotsLayer" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></div>
     </div>
   </div>
@@ -705,7 +769,7 @@ body{{font-family:-apple-system,"PingFang SC",sans-serif;background:#f8fafc;colo
     <div id="nodeCard">
       <div class="panel-default">
         <strong style="font-size:14px;display:block;margin-bottom:8px">整体描述</strong>
-        {desc}
+        {desc_safe}
       </div>
     </div>
   </div>
@@ -773,7 +837,7 @@ function showOverview() {{
   document.getElementById('nodeCard').innerHTML = `
     <div class="panel-default" style="margin-bottom:0">
       <strong style="font-size:14px;display:block;margin-bottom:8px">整体描述</strong>
-      {desc}
+      {desc_safe}
     </div>`;
   // 清除目录高亮
   document.querySelectorAll('.dir-item').forEach(el => el.classList.remove('dir-active'));
@@ -857,8 +921,8 @@ function toggleCollapse() {{
 def _fallback_html(graph: dict) -> str:
     """DeepSeek 调用失败时的降级：静态节点列表展示。"""
     nodes = graph.get("nodes", [])
-    title = graph.get("title", "机制图")
-    desc  = graph.get("overall_description", "")
+    title = _html.escape(graph.get("title", "机制图"))
+    desc  = _html.escape(graph.get("overall_description", ""))
 
     color_map = {
         "protein": "#667eea", "molecule": "#48bb78", "cell": "#9f7aea",
@@ -868,7 +932,8 @@ def _fallback_html(graph: dict) -> str:
     nodes_html = "".join([
         f'<span style="display:inline-block;margin:4px;padding:6px 14px;'
         f'border-radius:20px;background:{color_map.get(n.get("type",""), "#a0aec0")};'
-        f'color:white;font-size:13px">{n.get("label_zh") or n.get("label","")}</span>'
+        f'color:white;font-size:13px">'
+        f'{_html.escape(n.get("label_zh") or n.get("label","") or "")}</span>'
         for n in nodes
     ])
 
@@ -910,12 +975,15 @@ def process_image(image_bytes: bytes, abstract: str = "", caption: str = "",
     if len(graph.get("nodes", [])) < 2:
         return {"ok": False, "skipped": True, "reason": "节点数量不足，可能不是机制图"}
 
+    # Bug F：Qwen 偶发返回重复节点 id，去重以保证前端 DOM 唯一
+    graph = _normalize_node_ids(graph)
+
     try:
         html = generate_animation_html(graph, image_bytes=image_bytes, abstract=abstract)
         return {"ok": True, "html": html, "graph": graph}
     except Exception as e:
-        fallback = _fallback_html(graph)
-        return {"ok": False, "error": f"HTML 生成失败：{e}", "fallback_html": fallback, "graph": graph}
+        fallback_html = _fallback_html(graph)
+        return {"ok": False, "error": f"HTML 生成失败：{e}", "fallback_html": fallback_html, "graph": graph}
 
 
 def _extract_abstract(pdf_bytes: bytes) -> str:
@@ -975,12 +1043,15 @@ def process_article_pdf(article_url: str, progress_cb=None,
 
     try:
         pdf_bytes = download_pdf(pdf_url)
-    except TimeoutError:
-        _cb("⏳ 下载超时，正在重试（第2次，延长至120s）...")
+    except (TimeoutError, requests.Timeout, requests.ConnectionError) as e:
+        # Bug A：原本只 catch Python 内置 TimeoutError，
+        # 但 requests 实际抛 requests.exceptions.ReadTimeout/ConnectTimeout/ConnectionError，
+        # 这些都应该触发重试一次。
+        _cb(f"⏳ 下载{'超时' if isinstance(e, (TimeoutError, requests.Timeout)) else '连接失败'}，正在重试（第2次，延长至120s）...")
         try:
             pdf_bytes = download_pdf(pdf_url, connect_timeout=30, total_timeout=120)
-        except Exception as e:
-            return [{"ok": False, "error": f"PDF 下载失败（2次重试后仍超时）：{e}（URL: {pdf_url}）"}]
+        except Exception as e2:
+            return [{"ok": False, "error": f"PDF 下载失败（重试后仍失败）：{e2}（URL: {pdf_url}）"}]
     except Exception as e:
         return [{"ok": False, "error": f"PDF 下载失败：{e}（URL: {pdf_url}）"}]
 
@@ -1011,7 +1082,7 @@ def process_article_pdf(article_url: str, progress_cb=None,
     # 逐张扫描：跳过统计图/实验图，找到机制图即停止
     results = []
     skipped = 0
-    skipped_images = []  # (img_bytes, caption, index) 用于 fallback
+    fallback_candidates = []  # (img_bytes, caption, index) — 包含 skipped 和 errored，用于 fallback
     for i, img_bytes in enumerate(images):
         caption = captions[i] if i < len(captions) else ""
         _cb(f"🤖 Qwen 扫描第 {i+1}/{len(images)} 张图"
@@ -1023,17 +1094,25 @@ def process_article_pdf(article_url: str, progress_cb=None,
 
         if result.get("skipped"):
             skipped += 1
-            skipped_images.append((img_bytes, caption, i))
+            fallback_candidates.append((img_bytes, caption, i))
             continue  # 不是机制图，继续往后找
 
+        if not result.get("ok"):
+            # error（Qwen/HTML 生成异常）也作为 fallback 候选；保留 result 以便最终展示错误信息
+            fallback_candidates.append((img_bytes, caption, i))
+            results.append(result)
+            continue
+
         results.append(result)
-        if result.get("ok") and len([r for r in results if r.get("ok")]) >= MAX_ANIM_RESULTS:
+        if len([r for r in results if r.get("ok")]) >= MAX_ANIM_RESULTS:
             break  # 已找到足够的机制图，停止
 
-    # Fallback：若所有页都被跳过，强制识别前3张跳过的图
-    if not results and skipped_images:
-        _cb(f"⚡ 未识别到标准机制图，对候选图进行强制识别（共 {len(skipped_images)} 张）...")
-        for img_bytes, caption, i in skipped_images[:3]:
+    # Bug B：原条件 `if not results` 会被 error 项填满，导致 fallback 永远不触发。
+    # 改为：只要没有任何 ok 结果，就对候选图（含 skipped 和 errored）做强制识别。
+    has_ok = any(r.get("ok") for r in results)
+    if not has_ok and fallback_candidates:
+        _cb(f"⚡ 未识别到标准机制图，对候选图进行强制识别（共 {len(fallback_candidates)} 张）...")
+        for img_bytes, caption, i in fallback_candidates[:3]:
             _cb(f"🔄 强制识别第 {i+1} 张图...")
             result = process_image(img_bytes, abstract=abstract, caption=caption, fallback=True)
             result["image_hash"] = image_hash(img_bytes)
