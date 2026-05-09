@@ -845,6 +845,31 @@ def process_image(image_bytes: bytes, abstract: str = "") -> dict:
         return {"ok": False, "error": f"HTML 生成失败：{e}", "fallback_html": fallback, "graph": graph}
 
 
+def _extract_abstract(pdf_bytes: bytes) -> str:
+    """从 PDF 文本中自动提取 Abstract 段落，失败返回空字符串。"""
+    try:
+        import fitz, re
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        text = ""
+        for i, page in enumerate(doc):
+            if i >= 3:
+                break
+            text += page.get_text()
+        doc.close()
+
+        # 匹配 Abstract 到下一个大段落标题之间的内容
+        m = re.search(
+            r'(?i)\bAbstract\b[\s\.\-:]*\n?(.*?)(?=\n\s*\n\s*[A-Z][A-Za-z\s]{2,20}\n|\n1[\.\s]|\Z)',
+            text, re.DOTALL
+        )
+        if m:
+            snippet = re.sub(r'\s+', ' ', m.group(1)).strip()
+            return snippet[:2000]
+    except Exception:
+        pass
+    return ""
+
+
 def process_article_pdf(article_url: str, progress_cb=None,
                         abstract: str = "") -> List[dict]:
     """
@@ -861,11 +886,16 @@ def process_article_pdf(article_url: str, progress_cb=None,
         return [{"ok": False, "error": "该来源不支持自动下载 PDF，请手动上传图片"}]
 
     # 下载 PDF
-    _cb(f"📥 正在下载论文 PDF...")
+    _cb("📥 正在下载论文 PDF...")
     try:
         pdf_bytes = download_pdf(pdf_url)
     except Exception as e:
         return [{"ok": False, "error": f"PDF 下载失败：{e}（URL: {pdf_url}）"}]
+
+    # 自动提取摘要（用户未手动提供时）
+    if not abstract:
+        _cb("📋 自动提取论文摘要...")
+        abstract = _extract_abstract(pdf_bytes)
 
     # 提取图片
     _cb("🖼️ 正在提取论文图片...")

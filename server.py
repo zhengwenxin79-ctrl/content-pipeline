@@ -2944,8 +2944,8 @@ function renderAnimPanel(articleId, articleUrl, animations) {
       <details style="margin-bottom:10px">
         <summary style="font-size:12px;color:#6b46c1;cursor:pointer;user-select:none;
                         list-style:none;display:flex;align-items:center;gap:4px">
-          <span>📋 粘贴论文摘要</span>
-          <span style="font-size:10px;color:#a0aec0">（可选，让解读更贴近原文）</span>
+          <span>📋 补充论文摘要</span>
+          <span style="font-size:10px;color:#a0aec0">（PDF 流程自动提取；手动上传时可粘贴）</span>
         </summary>
         <textarea id="anim-abstract-${articleId}"
           placeholder="粘贴 Abstract / 摘要原文，AI 将据此生成论文专属解读而非通用词典..."
