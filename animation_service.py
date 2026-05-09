@@ -939,8 +939,20 @@ def process_article_pdf(article_url: str, progress_cb=None,
     if not pdf_url:
         return [{"ok": False, "error": "该来源不支持自动下载 PDF，请手动上传图片"}]
 
-    # 下载 PDF
-    _cb("📥 正在下载论文 PDF...")
+    # 下载前 HEAD 请求获取文件大小，给用户预估时间
+    try:
+        head = requests.head(pdf_url, timeout=8,
+                             headers={"User-Agent": "Mozilla/5.0 (research bot)"})
+        size_bytes = int(head.headers.get("Content-Length", 0))
+        if size_bytes > 0:
+            size_mb = size_bytes / 1024 / 1024
+            est_sec = max(10, int(size_mb * 8))  # 粗估：约1MB/s
+            _cb(f"📥 正在下载论文 PDF（{size_mb:.1f} MB，预计 {est_sec} 秒）...")
+        else:
+            _cb("📥 正在下载论文 PDF...")
+    except Exception:
+        _cb("📥 正在下载论文 PDF...")
+
     try:
         pdf_bytes = download_pdf(pdf_url)
     except Exception as e:
