@@ -3083,40 +3083,46 @@ async function _startAnimTask(articleId, payload) {
 
 // 轮询任务状态，完成后刷新面板
 async function _pollAnimTask(articleId, taskId, progressText, progressDiv, uploadArea) {
-  const res  = await fetch('/api/animation/status/' + taskId);
-  const data = await res.json();
+  try {
+    const res  = await fetch('/api/animation/status/' + taskId);
+    const data = await res.json();
 
-  if (progressText) progressText.textContent = data.progress || '处理中...';
+    if (progressText) progressText.textContent = data.progress || '处理中...';
 
-  if (data.status === 'running') {
-    setTimeout(() => _pollAnimTask(articleId, taskId, progressText, progressDiv, uploadArea), 2000);
-    return;
-  }
-
-  // 完成或出错，刷新动画列表
-  if (progressDiv) progressDiv.style.display = 'none';
-  const panel = document.getElementById('anim-panel-' + articleId);
-  if (panel) panel.dataset.loaded = '';   // 重置，触发重新加载
-
-  const listRes = await fetch('/api/animation/list?article_id=' + articleId);
-  const listData = await listRes.json();
-
-  // 取当前文章的 URL（从按钮 dataset 读）
-  const btn = document.getElementById('anim-btn-' + articleId);
-  const articleUrl = btn ? (btn.dataset.url || '') : '';
-  renderAnimPanel(articleId, articleUrl, listData.animations || []);
-  if (panel) panel.dataset.loaded = '1';
-
-  // 显示最终状态消息（renderAnimPanel 重建了 DOM，所以重新获取元素）
-  const finalMsg = data.progress || '';
-  if (finalMsg && !finalMsg.startsWith('✅')) {
-    const newProg = document.getElementById('anim-progress-' + articleId);
-    const newText = document.getElementById('anim-progress-text-' + articleId);
-    if (newProg && newText) {
-      newText.textContent = finalMsg;
-      newProg.style.display = 'flex';
-      setTimeout(() => { if (newProg) newProg.style.display = 'none'; }, 8000);
+    if (data.status === 'running') {
+      setTimeout(() => _pollAnimTask(articleId, taskId, progressText, progressDiv, uploadArea), 2000);
+      return;
     }
+
+    // 完成或出错，刷新动画列表
+    if (progressDiv) progressDiv.style.display = 'none';
+    const panel = document.getElementById('anim-panel-' + articleId);
+    if (panel) panel.dataset.loaded = '';
+
+    const listRes  = await fetch('/api/animation/list?article_id=' + articleId);
+    const listData = await listRes.json();
+    console.log('[anim] task done, status='+data.status+' progress='+data.progress
+                +' animations='+listData.animations?.length+' results='+JSON.stringify(data.results));
+
+    const btn = document.getElementById('anim-btn-' + articleId);
+    const articleUrl = btn ? (btn.dataset.url || '') : '';
+    renderAnimPanel(articleId, articleUrl, listData.animations || []);
+    if (panel) panel.dataset.loaded = '1';
+
+    // 始终显示最终状态消息（success 不显示，其余 30s 后才消失）
+    const finalMsg = data.progress || '';
+    if (finalMsg && !finalMsg.startsWith('✅')) {
+      const newProg = document.getElementById('anim-progress-' + articleId);
+      const newText = document.getElementById('anim-progress-text-' + articleId);
+      if (newProg && newText) {
+        newText.textContent = finalMsg;
+        newProg.style.display = 'flex';
+        setTimeout(() => { if (newProg) newProg.style.display = 'none'; }, 30000);
+      }
+    }
+  } catch(err) {
+    console.error('[anim] poll error:', err);
+    if (progressText) progressText.textContent = '轮询失败：' + err.message;
   }
 }
 
@@ -5813,6 +5819,7 @@ class Handler(BaseHTTPRequestHandler):
                     _anim_tasks[task_id]["progress"] = msg
 
                 try:
+                    import sys as _sys
                     if image_b64:
                         _prog("🔍 Qwen-VL-Max 正在识别图片结构...")
                         img_bytes = __import__("base64").b64decode(image_b64)
@@ -5824,6 +5831,10 @@ class Handler(BaseHTTPRequestHandler):
                         raw_results = animation_service.process_article_pdf(
                             article_url, progress_cb=_prog, abstract=abstract
                         )
+
+                    print(f"[anim] raw_results count={len(raw_results)} article_id={article_id}", file=_sys.stderr)
+                    for i, r in enumerate(raw_results):
+                        print(f"[anim]   [{i}] ok={r.get('ok')} skipped={r.get('skipped')} hash={r.get('image_hash','')[:8]} err={r.get('error','')[:80]}", file=_sys.stderr)
 
                     saved = []
                     for r in raw_results:
@@ -5874,9 +5885,12 @@ class Handler(BaseHTTPRequestHandler):
                         final_msg = f"❌ {saved[0].get('error', '处理失败')}"
                     else:
                         final_msg = "⚠️ PDF 中未提取到图片"
+                    print(f"[anim] done: {final_msg} saved={len(saved)}", file=_sys.stderr)
                     _anim_tasks[task_id] = {"status": "done", "progress": final_msg, "results": saved, "_ts": _t.time()}
                 except Exception as e:
-                    import time as _t
+                    import time as _t, sys as _sys, traceback as _tb
+                    print(f"[anim] exception: {e}", file=_sys.stderr)
+                    _tb.print_exc(file=_sys.stderr)
                     _anim_tasks[task_id] = {"status": "error", "progress": str(e), "results": [], "_ts": _t.time()}
 
             try:
