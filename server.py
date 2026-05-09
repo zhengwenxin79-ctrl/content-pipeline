@@ -3019,9 +3019,8 @@ function loadAnimFrame(articleId, idx, animId) {
 // iframe 加载完成后自动调高（跨域限制时回退到 480px）
 function autoResizeAnimFrame(iframe) {
   try {
-    const h = iframe.contentDocument.body.scrollHeight;
-    if (h > 100) iframe.style.height = h + 'px';
-    else iframe.style.height = '480px';
+    // 动画 HTML 内部用 100vh 布局，scrollHeight 不可靠，固定用 560px
+    iframe.style.height = '560px';
   } catch(e) {
     iframe.style.height = '480px';
   }
