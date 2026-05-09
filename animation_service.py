@@ -195,7 +195,7 @@ def analyze_image_with_qwen(image_bytes: bytes) -> dict:
     mime = "image/jpeg"  # 压缩后统一 JPEG
 
     resp = client.chat.completions.create(
-        model="qwen2-vl-72b-instruct",
+        model="qwen2.5-vl-72b-instruct",
         timeout=90,
         max_tokens=2500,
         messages=[{
@@ -259,7 +259,7 @@ def _verify_node_positions(image_bytes: bytes, nodes: list) -> list:
 
     try:
         resp = client.chat.completions.create(
-            model="qwen2-vl-72b-instruct",
+            model="qwen2.5-vl-72b-instruct",
             timeout=90,
             max_tokens=1500,
             messages=[{
