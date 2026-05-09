@@ -6181,6 +6181,12 @@ class Handler(BaseHTTPRequestHandler):
                     for r in raw_results:
                         ih = r.get("image_hash", "")
                         if not ih:
+                            # 早期失败（下载/提取错误），无 image_hash，保留错误信息
+                            if r.get("error") or r.get("skipped"):
+                                saved.append({"ok": False,
+                                              "skipped": r.get("skipped", False),
+                                              "error": r.get("error", ""),
+                                              "reason": r.get("reason", "")})
                             continue
                         if r.get("ok"):
                             anim_id = save_animation(
@@ -6220,10 +6226,13 @@ class Handler(BaseHTTPRequestHandler):
                     err_n   = len(saved) - ok_n - skip_n
                     if ok_n:
                         final_msg = f"✅ 完成，生成了 {ok_n} 个动画"
-                    elif skip_n:
+                    elif skip_n and not err_n:
                         final_msg = f"⚠️ 未找到机制图（{skip_n} 张图均为统计图/实验图）"
                     elif err_n and saved:
-                        final_msg = f"❌ {saved[0].get('error', '处理失败')}"
+                        first_err = next((r.get("error") for r in saved if r.get("error")), "处理失败")
+                        final_msg = f"❌ {first_err}"
+                    elif skip_n:
+                        final_msg = f"⚠️ 未找到机制图（{skip_n} 张图均为统计图/实验图）"
                     else:
                         final_msg = "⚠️ PDF 中未提取到图片"
                     print(f"[anim] done: {final_msg} saved={len(saved)}", file=_sys.stderr)

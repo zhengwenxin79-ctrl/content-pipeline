@@ -51,13 +51,13 @@ def derive_pdf_url(article_url: str) -> Optional[str]:
     return None
 
 
-def download_pdf(pdf_url: str, connect_timeout: int = 10,
-                 total_timeout: int = 60, max_mb: int = 20) -> bytes:
+def download_pdf(pdf_url: str, connect_timeout: int = 20,
+                 total_timeout: int = 90, max_mb: int = 20) -> bytes:
     """下载 PDF，返回原始字节。超时或过大均抛出异常。"""
     import time
     headers = {"User-Agent": "Mozilla/5.0 (research bot; contact: research@example.com)"}
     resp = requests.get(pdf_url, headers=headers,
-                        timeout=connect_timeout, stream=True)
+                        timeout=(connect_timeout, connect_timeout), stream=True)
     resp.raise_for_status()
 
     deadline = time.time() + total_timeout
@@ -175,13 +175,36 @@ _QWEN_PROMPT_TMPL = """你是论文图分析专家。请判断这张图片是否
 
 只输出 JSON，不要任何说明文字。"""
 
+# fallback 强制识别：不允许 skip，强制从图中提取图形结构
+_QWEN_FALLBACK_PROMPT = """你是论文图分析专家。这张图片来自科研论文PDF页面渲染。{caption_section}⚠️ **强制识别模式**：你必须从图中找出任何可识别的图形元素（方框、圆圈、箭头、节点、流程线），不允许返回 skip。
+即使图形不完全符合标准机制图，也要分析页面中最主要的图形区域并返回结构化信息。
 
-def _build_qwen_prompt(caption: str = "") -> str:
+【节点标注规则】
+- diagram_region：图形区域（不含图注文字）在整张图中的边界框（0.0~1.0）
+- 节点 x/y：节点中心在整张图片中的绝对坐标（左上角=0,0，右下角=1,1）
+- label_zh：若图注中有对应说明，必须结合图注解释符号语义
+- 至少返回 2 个节点
+
+返回格式（纯 JSON，不要任何说明文字）：
+{{
+  "skip": false,
+  "title": "图的中文简称（10字以内）",
+  "diagram_region": {{"x1": 0.0, "y1": 0.0, "x2": 1.0, "y2": 1.0}},
+  "nodes": [
+    {{"id": "n1", "label": "节点原文", "label_zh": "中文含义", "type": "process|module|data|input|output|molecule|protein|cell|organ|drug", "x": 0.35, "y": 0.25}}
+  ],
+  "edges": [{{"from": "n1", "to": "n2", "label": "关系", "type": "activate|inhibit|transform|bind|express"}}],
+  "overall_description": "一句话说明整体流程或机制（中文）"
+}}"""
+
+
+def _build_qwen_prompt(caption: str = "", fallback: bool = False) -> str:
     if caption:
         section = f"\n\n【图注参考（Figure caption）】\n{caption}\n请结合图注理解图形含义，并用图注中的描述填充 label_zh 和 overall_description。\n\n"
     else:
         section = "\n\n"
-    return _QWEN_PROMPT_TMPL.format(caption_section=section)
+    tmpl = _QWEN_FALLBACK_PROMPT if fallback else _QWEN_PROMPT_TMPL
+    return tmpl.format(caption_section=section)
 
 
 def _crop_to_diagram_region(image_bytes: bytes, dr: dict,
@@ -243,10 +266,12 @@ def _compress_image(image_bytes: bytes, max_side: int = 1200, quality: int = 85)
         return image_bytes  # 压缩失败则原图传输
 
 
-def analyze_image_with_qwen(image_bytes: bytes, caption: str = "") -> dict:
+def analyze_image_with_qwen(image_bytes: bytes, caption: str = "",
+                             fallback: bool = False) -> dict:
     """
     调用 Qwen-VL-Max 分析图片结构。
     caption 传入图注文字时，用于辅助判断图类型和解释数学符号节点。
+    fallback=True 时使用强制识别 prompt（不允许 skip）。
     返回 graph dict，或 {"skip": True, "reason": "..."}。
     """
     from openai import OpenAI
@@ -266,12 +291,13 @@ def analyze_image_with_qwen(image_bytes: bytes, caption: str = "") -> dict:
     resp = client.chat.completions.create(
         model="qwen2.5-vl-72b-instruct",
         timeout=90,
-        max_tokens=2500,
+        temperature=0,
+        max_tokens=4000,
         messages=[{
             "role": "user",
             "content": [
                 {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-                {"type": "text", "text": _build_qwen_prompt(caption)},
+                {"type": "text", "text": _build_qwen_prompt(caption, fallback=fallback)},
             ],
         }],
     )
@@ -330,6 +356,7 @@ def _verify_node_positions(image_bytes: bytes, nodes: list) -> list:
         resp = client.chat.completions.create(
             model="qwen2.5-vl-72b-instruct",
             timeout=90,
+            temperature=0,
             max_tokens=1500,
             messages=[{
                 "role": "user",
@@ -390,61 +417,45 @@ def _extract_json(text: str) -> dict:
     raise ValueError(f"无法从模型输出中提取有效 JSON，原始内容前200字：{text[:200]}")
 
 
-# ── 节点坐标归一化 + 斥力分散 ────────────────────────────────────────────────────
+# ── 节点轻量斥力（避免热区重叠）─────────────────────────────────────────────────
 
-def _spread_nodes(nodes: list, margin: float = 0.06) -> list:
+def _repel_overlapping_nodes(nodes: list, min_dist: float = 0.045) -> list:
     """
-    将 Qwen 返回的节点坐标铺满 [margin, 1-margin] 区间，
-    再做迭代斥力推开，避免节点重叠。
+    overlay 模式专用：只在两节点距离过近时沿连线方向轻微推开，
+    不做整体拉伸，保留节点与原图的位置对应关系。
+    min_dist=0.045 约对应 800px 图宽下 36px 视觉间距，可保证 14px 圆点不互相覆盖。
     """
     import copy
     nodes = copy.deepcopy(nodes)
     if len(nodes) < 2:
         return nodes
 
-    xs = [n.get("x", 0.5) for n in nodes]
-    ys = [n.get("y", 0.5) for n in nodes]
-    x_min, x_max = min(xs), max(xs)
-    y_min, y_max = min(ys), max(ys)
-    x_range = x_max - x_min or 1.0
-    y_range = y_max - y_min or 1.0
-
-    # 归一化到 [margin, 1-margin]
-    span = 1.0 - 2 * margin
-    for n in nodes:
-        n["x"] = margin + (n.get("x", 0.5) - x_min) / x_range * span
-        n["y"] = margin + (n.get("y", 0.5) - y_min) / y_range * span
-
-    # 节点在归一化坐标下的最小间距（对应 SVG 110px/720 ≈ 0.155，36px/340 ≈ 0.11）
-    min_dx, min_dy = 0.17, 0.14
-
-    for _ in range(80):
+    for _ in range(50):
         moved = False
         for i in range(len(nodes)):
             for j in range(i + 1, len(nodes)):
                 dx = nodes[j]["x"] - nodes[i]["x"]
                 dy = nodes[j]["y"] - nodes[i]["y"]
-                if abs(dx) < min_dx and abs(dy) < min_dy:
-                    # 优先沿更"近"的轴推开
-                    if abs(dx) * min_dy < abs(dy) * min_dx:
-                        push = (min_dx - abs(dx)) / 2 + 0.005
-                        sign = 1 if dx >= 0 else -1
-                        nodes[i]["x"] -= sign * push
-                        nodes[j]["x"] += sign * push
-                    else:
-                        push = (min_dy - abs(dy)) / 2 + 0.005
-                        sign = 1 if dy >= 0 else -1
-                        nodes[i]["y"] -= sign * push
-                        nodes[j]["y"] += sign * push
+                dist = (dx * dx + dy * dy) ** 0.5
+                if dist < min_dist:
+                    if dist < 1e-6:
+                        # 完全重合：沿 x 轴拆开
+                        nodes[j]["x"] += min_dist
+                        moved = True
+                        continue
+                    push = (min_dist - dist) / 2 + 0.002
+                    ux, uy = dx / dist, dy / dist
+                    nodes[i]["x"] -= ux * push
+                    nodes[i]["y"] -= uy * push
+                    nodes[j]["x"] += ux * push
+                    nodes[j]["y"] += uy * push
                     moved = True
         if not moved:
             break
 
-    # 钳位到 [0.01, 0.99]
     for n in nodes:
-        n["x"] = max(0.01, min(0.99, n["x"]))
-        n["y"] = max(0.01, min(0.99, n["y"]))
-
+        n["x"] = max(0.02, min(0.98, n["x"]))
+        n["y"] = max(0.02, min(0.98, n["y"]))
     return nodes
 
 
@@ -582,10 +593,16 @@ def _build_overlay_html(graph_json: dict, image_bytes: bytes, knowledge: dict) -
     desc  = graph_json.get("overall_description", "")
     nodes = graph_json.get("nodes", [])
 
+    # Pass-2 坐标校准：在整页图坐标系下，让 Qwen 对照原图修正偏差
+    nodes = _verify_node_positions(image_bytes, nodes)
+
     # 利用 diagram_region 做坐标映射：Qwen 的 x/y 是整图坐标，直接使用
     # 按 diagram_region 裁剪图片，避免显示整页 PDF 留下大片空白
     dr = graph_json.get("diagram_region", {"x1": 0, "y1": 0, "x2": 1, "y2": 1})
     image_bytes, nodes = _crop_to_diagram_region(image_bytes, dr, nodes)
+
+    # 裁剪图坐标系下做轻量斥力，避免热区圆点重叠
+    nodes = _repel_overlapping_nodes(nodes)
 
     img_b64 = base64.b64encode(image_bytes).decode()
     mime = "image/jpeg"
@@ -875,13 +892,15 @@ def _fallback_html(graph: dict) -> str:
 
 # ── 完整流程入口 ───────────────────────────────────────────────────────────────
 
-def process_image(image_bytes: bytes, abstract: str = "", caption: str = "") -> dict:
+def process_image(image_bytes: bytes, abstract: str = "", caption: str = "",
+                  fallback: bool = False) -> dict:
     """
     单张图片完整流程：Qwen 识别 → DeepSeek 生成 HTML。
     caption 传入图注文字时，Qwen 用其辅助判断图类型和解释符号节点。
+    fallback=True 时使用强制识别 prompt，不允许 skip。
     """
     try:
-        graph = analyze_image_with_qwen(image_bytes, caption=caption)
+        graph = analyze_image_with_qwen(image_bytes, caption=caption, fallback=fallback)
     except Exception as e:
         return {"ok": False, "error": f"Qwen 识图失败：{e}"}
 
@@ -940,11 +959,12 @@ def process_article_pdf(article_url: str, progress_cb=None,
         return [{"ok": False, "error": "该来源不支持自动下载 PDF，请手动上传图片"}]
 
     # 下载前 HEAD 请求获取文件大小，给用户预估时间
+    # 注意：requests.head 默认不跟重定向，需显式 allow_redirects=True
     try:
-        head = requests.head(pdf_url, timeout=8,
+        head = requests.head(pdf_url, timeout=8, allow_redirects=True,
                              headers={"User-Agent": "Mozilla/5.0 (research bot)"})
         size_bytes = int(head.headers.get("Content-Length", 0))
-        if size_bytes > 0:
+        if size_bytes > 50_000:  # 至少 50KB 才算是真实 PDF 大小，过滤掉重定向 HTML
             size_mb = size_bytes / 1024 / 1024
             est_sec = max(10, int(size_mb * 8))  # 粗估：约1MB/s
             _cb(f"📥 正在下载论文 PDF（{size_mb:.1f} MB，预计 {est_sec} 秒）...")
@@ -955,6 +975,12 @@ def process_article_pdf(article_url: str, progress_cb=None,
 
     try:
         pdf_bytes = download_pdf(pdf_url)
+    except TimeoutError:
+        _cb("⏳ 下载超时，正在重试（第2次，延长至120s）...")
+        try:
+            pdf_bytes = download_pdf(pdf_url, connect_timeout=30, total_timeout=120)
+        except Exception as e:
+            return [{"ok": False, "error": f"PDF 下载失败（2次重试后仍超时）：{e}（URL: {pdf_url}）"}]
     except Exception as e:
         return [{"ok": False, "error": f"PDF 下载失败：{e}（URL: {pdf_url}）"}]
 
@@ -985,6 +1011,7 @@ def process_article_pdf(article_url: str, progress_cb=None,
     # 逐张扫描：跳过统计图/实验图，找到机制图即停止
     results = []
     skipped = 0
+    skipped_images = []  # (img_bytes, caption, index) 用于 fallback
     for i, img_bytes in enumerate(images):
         caption = captions[i] if i < len(captions) else ""
         _cb(f"🤖 Qwen 扫描第 {i+1}/{len(images)} 张图"
@@ -996,11 +1023,25 @@ def process_article_pdf(article_url: str, progress_cb=None,
 
         if result.get("skipped"):
             skipped += 1
+            skipped_images.append((img_bytes, caption, i))
             continue  # 不是机制图，继续往后找
 
         results.append(result)
         if result.get("ok") and len([r for r in results if r.get("ok")]) >= MAX_ANIM_RESULTS:
             break  # 已找到足够的机制图，停止
+
+    # Fallback：若所有页都被跳过，强制识别前3张跳过的图
+    if not results and skipped_images:
+        _cb(f"⚡ 未识别到标准机制图，对候选图进行强制识别（共 {len(skipped_images)} 张）...")
+        for img_bytes, caption, i in skipped_images[:3]:
+            _cb(f"🔄 强制识别第 {i+1} 张图...")
+            result = process_image(img_bytes, abstract=abstract, caption=caption, fallback=True)
+            result["image_hash"] = image_hash(img_bytes)
+            result["image_index"] = i
+            if not result.get("skipped"):
+                results.append(result)
+                if result.get("ok"):
+                    break  # 找到一个可用结果即止
 
     if not results:
         return [{"ok": False, "skipped": True,
