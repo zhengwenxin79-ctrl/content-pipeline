@@ -867,7 +867,7 @@ function showNode(id) {{
   if (!n) return;
   const k = KNOWLEDGE[id] || {{}};
   const color = COLOR_MAP[n.type] || '#a0aec0';
-  const fmt = s => s ? s.replace(/\n/g, '<br>') : '';
+  const fmt = s => s ? s.replace(/\\n/g, '<br>') : '';
 
   document.getElementById('nodeCard').innerHTML = `
     <div class="node-header">
