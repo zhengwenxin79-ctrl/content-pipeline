@@ -6,6 +6,7 @@
 
 import os
 import json
+import logging
 import secrets
 import threading
 import subprocess
@@ -103,6 +104,36 @@ def fetch_user_feeds_once():
 
 # 全局任务状态
 task_status = {"running": False, "log": [], "step": ""}
+
+_SUMMARY_FAILED = "__FAILED__"       # 占位符：已尝试但失败，跳过重试
+_summary_lock = threading.Lock()     # 同一时刻只允许一个摘要生成线程
+
+# ── Rate limiting ─────────────────────────────────────────────────────────────
+from collections import defaultdict as _defaultdict
+import time as _time
+_rate_buckets: dict = _defaultdict(list)  # ip → [timestamps]
+_rate_lock = threading.Lock()
+
+def _check_rate_limit(ip: str, limit: int, window: int = 60) -> bool:
+    """返回 True 表示允许，False 表示超限。limit 次/window 秒。"""
+    now = _time.time()
+    with _rate_lock:
+        bucket = [t for t in _rate_buckets[ip] if now - t < window]
+        if len(bucket) >= limit:
+            _rate_buckets[ip] = bucket
+            return False
+        bucket.append(now)
+        _rate_buckets[ip] = bucket
+    return True
+
+# (path前缀, limit, window秒)
+_RATE_RULES = [
+    ("/api/animation",         3,  60),   # 动画：3次/分钟（BYOK用户已有配额，这是系统兜底）
+    ("/api/auth/register",     5, 300),   # 注册：5次/5分钟
+    ("/api/auth/login",        10, 60),   # 登录：10次/分钟
+    ("/api/run",               2,  60),   # 手动触发爬取：2次/分钟
+    ("/api/digest",            60, 60),   # 防轮询轰炸：60次/分钟
+]
 
 # 写作推荐缓存（避免每次刷新都调用API）
 _recommend_cache = {"data": None, "digest_hash": ""}
@@ -1260,47 +1291,63 @@ def is_english(text: str) -> bool:
 
 
 def generate_ai_summaries_and_cache(articles: list) -> None:
-    """为没有 ai_summary 的文章批量生成一句话总结并缓存到数据库"""
-    need = [a for a in articles if not a.get("ai_summary")]
-    if not need or not DEEPSEEK_API_KEY:
-        return
+    """批量生成摘要：全局锁防重入，分批处理，失败写占位符防无限重试"""
+    if not _summary_lock.acquire(blocking=False):
+        return  # 已有线程在跑，本次直接跳过
     try:
+        need = [a for a in articles
+                if not a.get("ai_summary") or a["ai_summary"] == _SUMMARY_FAILED]
+        if not need or not DEEPSEEK_API_KEY:
+            return
         from openai import OpenAI
         client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
-        articles_text = "\n\n".join([
-            "ID:{} 标题:{}\n内容:{}".format(a['id'], a['title'], (a.get('_raw_content') or '')[:400])
-            for a in need
-        ])
-        prompt = (
-            "你是医疗AI领域的科研助手。请为以下论文/文章各写一句话核心总结，要求：\n"
-            "1. 40字以内\n"
-            "2. 格式：[做了什么] + [关键结论或数字]\n"
-            "3. 直接说结论，不要用本文、研究者等开头\n"
-            "4. 举例：提出基于Transformer的ECG分类模型，在MIT-BIH数据集上F1达97.3%，超越现有方法4%\n\n"
-            '只输出JSON，格式：{"summaries": [{"id": 1, "summary": "一句话总结"}]}\n\n'
-            "文章列表：\n" + articles_text
-        )
-        resp = client.chat.completions.create(
-            model="deepseek-chat", timeout=60, max_tokens=1000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        text = resp.choices[0].message.content.strip()
-        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        import json as _json
-        result = _json.loads(text)
-        summary_map = {s["id"]: s["summary"] for s in result.get("summaries", [])}
-        conn = get_conn(DB_PATH)
-        try:
-            for a in need:
-                s = summary_map.get(a["id"], "")
-                if s:
-                    a["ai_summary"] = s
-                    conn.execute("UPDATE articles SET ai_summary=? WHERE id=?", (s, a["id"]))
-            conn.commit()
-        finally:
-            conn.close()
-    except Exception:
-        pass
+        BATCH = 20
+        for i in range(0, len(need), BATCH):
+            batch = need[i:i + BATCH]
+            try:
+                articles_text = "\n\n".join([
+                    "ID:{} 标题:{}\n内容:{}".format(
+                        a['id'], a['title'], (a.get('_raw_content') or '')[:300])
+                    for a in batch
+                ])
+                prompt = (
+                    "你是医疗AI领域的科研助手。请为以下论文/文章各写一句话核心总结，要求：\n"
+                    "1. 40字以内\n"
+                    "2. 直接说结论，不要用本文、研究者等开头\n"
+                    '只输出JSON，格式：{"summaries": [{"id": 1, "summary": "一句话总结"}]}\n\n'
+                    "文章列表：\n" + articles_text
+                )
+                resp = client.chat.completions.create(
+                    model="deepseek-chat", timeout=60, max_tokens=1500,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                text = resp.choices[0].message.content.strip()
+                text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                result = json.loads(text)
+                summary_map = {s["id"]: s["summary"] for s in result.get("summaries", [])}
+                conn = get_conn(DB_PATH)
+                try:
+                    for a in batch:
+                        s = summary_map.get(a["id"], "")
+                        val = s if s else _SUMMARY_FAILED
+                        a["ai_summary"] = val
+                        conn.execute("UPDATE articles SET ai_summary=? WHERE id=?", (val, a["id"]))
+                    conn.commit()
+                finally:
+                    conn.close()
+            except Exception:
+                logging.exception("generate_ai_summaries batch %d-%d failed", i, i + BATCH)
+                conn = get_conn(DB_PATH)
+                try:
+                    for a in batch:
+                        a["ai_summary"] = _SUMMARY_FAILED
+                        conn.execute("UPDATE articles SET ai_summary=? WHERE id=?",
+                                     (_SUMMARY_FAILED, a["id"]))
+                    conn.commit()
+                finally:
+                    conn.close()
+    finally:
+        _summary_lock.release()
 
 
 def translate_titles(articles: list) -> dict:
@@ -1419,9 +1466,10 @@ def get_digest_data(days=2):
         result[cat].append(article)
         all_articles.append(article)
 
-    # 统计需要生成摘要的文章数
-    need_summary = [a for a in all_articles if not a.get("ai_summary")]
-    generating_summaries = len(need_summary) > 0
+    # 统计需要生成摘要的文章数（排除已失败占位符，避免无限重试）
+    need_summary = [a for a in all_articles
+                    if not a.get("ai_summary") or a["ai_summary"] == _SUMMARY_FAILED]
+    generating_summaries = len(need_summary) > 0 and _summary_lock.locked()
 
     # 已有缓存的先同步到 summary 字段
     for a in all_articles:
@@ -2246,6 +2294,8 @@ let polling = null;
 let _currentUser = null;
 
 let _summaryPollTimer = null;
+let _summaryPollCount = 0;
+let _summaryLastCount = -1;
 
 async function _pollSummaries() {
   try {
@@ -2268,10 +2318,19 @@ async function _pollSummaries() {
       const count = digest._need_summary_count || 0;
       if (banner) banner.querySelector('span').textContent =
         `AI 正在为 ${count} 篇文章生成一句话摘要，完成后自动填入…`;
-      _summaryPollTimer = setTimeout(_pollSummaries, 5000);
+      // 连续 6 次 count 没变化则停轮询（后台可能已静默失败）
+      if (count === _summaryLastCount) { _summaryPollCount++; } else { _summaryPollCount = 0; }
+      _summaryLastCount = count;
+      if (_summaryPollCount < 6) {
+        _summaryPollTimer = setTimeout(_pollSummaries, 5000);
+      } else {
+        if (banner) banner.style.display = 'none';
+        _summaryPollTimer = null;
+      }
     } else {
       if (banner) banner.style.display = 'none';
       _summaryPollTimer = null;
+      _summaryPollCount = 0;
     }
   } catch(e) {
     _summaryPollTimer = setTimeout(_pollSummaries, 8000);
@@ -5336,7 +5395,26 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _rate_check(self) -> bool:
+        """返回 False 表示已超限并已发送 429，调用方应直接 return。"""
+        ip = self.client_address[0]
+        req_path = urlparse(self.path).path
+        for prefix, limit, window in _RATE_RULES:
+            if req_path.startswith(prefix):
+                if not _check_rate_limit(ip, limit, window):
+                    body = b'{"error":"rate_limited","msg":"\xe8\xaf\xb7\xe6\xb1\x82\xe8\xbf\x87\xe4\xba\x8e\xe9\xa2\x91\xe7\xb9\x81\xef\xbc\x8c\xe8\xaf\xb7\xe7\xa8\x8d\xe5\x90\x8e\xe5\x86\x8d\xe8\xaf\x95"}'
+                    self.send_response(429)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", len(body))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return False
+                break
+        return True
+
     def do_GET(self):
+        if not self._rate_check():
+            return
         path = urlparse(self.path).path
 
         if path == "/" or path == "/index.html":
@@ -5814,6 +5892,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(delete_research_profile(pid, user["email"], DB_PATH))
 
     def do_POST(self):
+        if not self._rate_check():
+            return
         if self.path == "/api/survey/submit":
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")

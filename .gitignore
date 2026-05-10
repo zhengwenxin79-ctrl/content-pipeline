@@ -33,3 +33,21 @@ server.py.bak
 
 # 测试输出
 test_animation_output.html
+test_lightbox_output.html
+test_outputs/
+test_outputs_log.txt
+
+# 测试图片（本地调试用）
+test_img_*.png
+test_med_*.png
+test_qbio_*.png
+cs_*.png
+med_*.png
+medai_*.png
+
+# 备份 / 临时副本
+*.bak
+*_副本.py
+
+# 密钥（禁止提交）
+corpus/master.key
