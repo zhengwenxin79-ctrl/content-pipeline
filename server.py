@@ -127,8 +127,10 @@ def _check_rate_limit(ip: str, limit: int, window: int = 60) -> bool:
     return True
 
 # (path前缀, limit, window秒)
+# 注意：只限制写/触发操作；状态轮询（/api/animation/status/）和列表查询不在此限
 _RATE_RULES = [
-    ("/api/animation",         3,  60),   # 动画：3次/分钟（BYOK用户已有配额，这是系统兜底）
+    ("/api/animation/reset",   5,  60),   # 触发新动画：5次/分钟
+    ("/api/animation/upload",  5,  60),   # 上传图片触发：5次/分钟
     ("/api/auth/register",     5, 300),   # 注册：5次/5分钟
     ("/api/auth/login",        10, 60),   # 登录：10次/分钟
     ("/api/run",               2,  60),   # 手动触发爬取：2次/分钟
