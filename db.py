@@ -236,7 +236,6 @@ def init_db(db_path: str = "corpus/corpus.db"):
             comic_style     TEXT DEFAULT 'hand-drawn',
             FOREIGN KEY (user_id) REFERENCES users(id)
         )""",
-        )""",
     ]
     for sql in migrations:
         try:
