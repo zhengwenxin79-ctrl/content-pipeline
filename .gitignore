@@ -44,6 +44,7 @@ test_qbio_*.png
 cs_*.png
 med_*.png
 medai_*.png
+tests/cv_poc/out_*.png
 
 # 备份 / 临时副本
 *.bak
