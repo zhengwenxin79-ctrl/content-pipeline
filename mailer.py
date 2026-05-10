@@ -657,5 +657,96 @@ def push_single(email: str, db_path: str = DB_PATH) -> dict:
         return {"ok": False, "msg": "邮件发送失败，请检查SMTP配置"}
 
 
+def build_skill_message(articles: list, xhs_notes: list = None,
+                        template_style: str = "card", date_str: str = "") -> str:
+    """
+    为 OpenClaw Skill 生成聊天消息文本（非 HTML）。
+    支持 4 种模板风格: classic / card / minimal / magazine
+    articles: [{"id", "title", "title_zh", "ai_summary", "source_name", "score", "url", "category"}]
+    xhs_notes: [{"title", "url", "liked_count", "content"}]
+    """
+    if not date_str:
+        from datetime import datetime
+        date_str = datetime.now().strftime("%Y年%m月%d日")
+
+    # 分类 emoji 映射
+    cat_emoji = {
+        "顶刊论文": "📄", "大组动态": "🔬",
+        "商业落地": "💰", "开源项目": "💻", "未分类": "📌",
+    }
+
+    def _article_line(a, idx):
+        title = a.get("title_zh") or a.get("title", "")
+        score = a.get("score", 0)
+        source = a.get("source_name", "")
+        summary = a.get("ai_summary", "")
+        emoji = cat_emoji.get(a.get("category", ""), "📌")
+        if template_style == "minimal":
+            return f"{idx}. {title} ({source} ★{score})"
+        elif template_style == "magazine":
+            return f"  {emoji} {title}\n     {source} · 评分 {score}\n     {summary}"
+        elif template_style == "classic":
+            return f"[{idx}] {title}\n    来源: {source} | 评分: {score}\n    {summary}"
+        else:  # card
+            stars = "⭐" * min(int(score / 2), 5)
+            return f"┌─ {emoji} {title}\n│  {source} {stars} {score}\n│  {summary}\n└{'─' * 30}"
+
+    # 构建消息
+    lines = []
+
+    if template_style == "card":
+        lines.append(f"{'═' * 32}")
+        lines.append(f"  🏥 医疗AI每日情报  {date_str}")
+        lines.append(f"{'═' * 32}")
+    elif template_style == "magazine":
+        lines.append(f"━━━ 🏥 医疗AI情报 · {date_str} ━━━")
+        lines.append("")
+    elif template_style == "classic":
+        lines.append(f"【医疗AI每日情报】{date_str}")
+        lines.append("-" * 30)
+    else:  # minimal
+        lines.append(f"📋 {date_str} 情报")
+
+    # 按分类输出文章
+    idx = 0
+    for a in articles:
+        idx += 1
+        lines.append(_article_line(a, idx))
+
+    if idx == 0:
+        lines.append("暂无匹配的高质量文章")
+
+    # 小红书笔记
+    if xhs_notes:
+        if template_style == "card":
+            lines.append("")
+            lines.append("┌─────────────────────────────")
+            lines.append("│  📕 小红书热门笔记")
+            lines.append("├─────────────────────────────")
+        elif template_style == "magazine":
+            lines.append("")
+            lines.append("━━━ 📕 小红书精选 ━━━")
+        else:
+            lines.append("")
+            lines.append("📕 小红书热门:")
+
+        for note in xhs_notes[:3]:
+            ntitle = note.get("title", "")
+            likes = note.get("liked_count", "")
+            if template_style == "card":
+                lines.append(f"│  🔥 {ntitle}  ({likes}赞)")
+            else:
+                lines.append(f"  - {ntitle} ({likes}赞)")
+
+        if template_style == "card":
+            lines.append("└─────────────────────────────")
+
+    # 交互提示
+    lines.append("")
+    lines.append("💬 回复论文序号，看漫画详解")
+
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     run_daily_push()

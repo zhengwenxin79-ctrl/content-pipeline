@@ -5544,6 +5544,28 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self.send_json({"ok": False, "msg": _friendly_api_error(e)})
 
+        elif path.startswith("/api/article/") and path != "/api/article/analyze":
+            # GET /api/article/{id} — 返回单篇文章完整数据
+            try:
+                article_id = int(path.split("/")[-1])
+            except ValueError:
+                self.send_json({"ok": False, "msg": "id 格式错误"}, 400); return
+            conn = get_conn(DB_PATH)
+            try:
+                row = conn.execute(
+                    "SELECT id, title, content, source_name, url, quality_score, "
+                    "COALESCE(ai_summary,'') as ai_summary, "
+                    "COALESCE(deep_analysis,'') as deep_analysis, "
+                    "published_at, tags, category "
+                    "FROM articles WHERE id=?",
+                    (article_id,)
+                ).fetchone()
+            finally:
+                conn.close()
+            if not row:
+                self.send_json({"ok": False, "msg": "文章不存在"}, 404); return
+            self.send_json({"ok": True, "article": dict(row)})
+
         elif path == "/api/survey/analyze":
             user = _get_session(self)
             ADMIN_EMAILS = ['2471149840@qq.com', 'zhengwenxin79@gmail.com']
@@ -5650,6 +5672,38 @@ class Handler(BaseHTTPRequestHandler):
             db_stats = stats(DB_PATH)
             self.send_json({"digest": digest, "stats": db_stats})
 
+        elif path == "/api/digest/for-skill":
+            # 精简版 digest，只返回 Skill 需要的字段，不含 _raw_content 全文
+            qs = parse_qs(urlparse(self.path).query)
+            days = int(qs.get("days", ["1"])[0])
+            raw_digest = get_digest_data(days=days)
+            slim_digest = {}
+            for cat, articles in raw_digest.items():
+                if cat.startswith("_"):
+                    slim_digest[cat] = articles
+                    continue
+                slim_digest[cat] = [
+                    {
+                        "id": a.get("id"),
+                        "title": a.get("title", ""),
+                        "title_zh": a.get("title_zh", ""),
+                        "ai_summary": a.get("ai_summary") or a.get("summary", ""),
+                        "source_name": a.get("source", a.get("source_name", "")),
+                        "score": a.get("score", 0),
+                        "url": a.get("url", ""),
+                        "category": cat,
+                    }
+                    for a in articles
+                ]
+            # 小红书笔记
+            xhs_notes = []
+            try:
+                from mailer import fetch_xhs_for_keywords
+                xhs_notes = fetch_xhs_for_keywords("", None, [])[:5]
+            except Exception:
+                pass
+            self.send_json({"digest": slim_digest, "xhs_notes": xhs_notes})
+
         elif path == "/api/status":
             self.send_json(task_status)
 
@@ -5744,6 +5798,20 @@ class Handler(BaseHTTPRequestHandler):
                  "created_at": p["created_at"]}
                 for p in profiles
             ]})
+
+        elif path == "/api/preferences":
+            user = _get_session(self)
+            if not user:
+                self.send_json({"ok": True, "preferences": {
+                    "template_style": "card",
+                    "push_time": "08:00",
+                    "content_format": "mixed",
+                    "comic_style": "hand-drawn",
+                }})
+                return
+            from db import get_user_preferences
+            prefs = get_user_preferences(user["id"], DB_PATH)
+            self.send_json({"ok": True, "preferences": prefs})
 
         elif path == "/api/subscribe/preview":
             qs = parse_qs(urlparse(self.path).query)
@@ -6329,6 +6397,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(result)
             except Exception as e:
                 self.send_json({"ok": False, "msg": str(e)})
+
+        elif self.path == "/api/preferences":
+            user = self._get_session()
+            if not user:
+                self.send_json({"ok": False, "msg": "请先登录"}, 401); return
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            from db import save_user_preferences
+            save_user_preferences(user["id"], body, DB_PATH)
+            self.send_json({"ok": True})
+            return
 
         elif self.path == "/api/invite/create":
             user = self._require_login()

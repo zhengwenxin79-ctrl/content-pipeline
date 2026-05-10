@@ -228,6 +228,15 @@ def init_db(db_path: str = "corpus/corpus.db"):
             count    INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (user_id, feature, date)
         )""",
+        """CREATE TABLE IF NOT EXISTS user_preferences (
+            user_id         INTEGER PRIMARY KEY,
+            template_style  TEXT DEFAULT 'card',
+            push_time       TEXT DEFAULT '08:00',
+            content_format  TEXT DEFAULT 'mixed',
+            comic_style     TEXT DEFAULT 'hand-drawn',
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )""",
+        )""",
     ]
     for sql in migrations:
         try:
@@ -992,5 +1001,51 @@ def migrate_research_directions(db_path: str = "corpus/corpus.db"):
         conn.commit()
         if migrated:
             print(f"✓ 迁移了 {migrated} 条旧研究方向到档案表")
+    finally:
+        conn.close()
+
+
+# ── user_preferences (OpenClaw Skill) ─────────────────
+
+def get_user_preferences(user_id: int, db_path: str = "corpus/corpus.db") -> dict:
+    """获取用户偏好设置，不存在则返回默认值"""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT template_style, push_time, content_format, comic_style FROM user_preferences WHERE user_id=?",
+            (user_id,)
+        ).fetchone()
+        if row:
+            return dict(row)
+        return {
+            "template_style": "card",
+            "push_time": "08:00",
+            "content_format": "mixed",
+            "comic_style": "hand-drawn",
+        }
+    finally:
+        conn.close()
+
+
+def save_user_preferences(user_id: int, prefs: dict, db_path: str = "corpus/corpus.db"):
+    """保存用户偏好设置（upsert）"""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""
+            INSERT INTO user_preferences (user_id, template_style, push_time, content_format, comic_style)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                template_style=excluded.template_style,
+                push_time=excluded.push_time,
+                content_format=excluded.content_format,
+                comic_style=excluded.comic_style
+        """, (
+            user_id,
+            prefs.get("template_style", "card"),
+            prefs.get("push_time", "08:00"),
+            prefs.get("content_format", "mixed"),
+            prefs.get("comic_style", "hand-drawn"),
+        ))
+        conn.commit()
     finally:
         conn.close()

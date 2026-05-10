@@ -1,0 +1,8 @@
+{
+  "name": "medai-digest",
+  "description": "医疗AI每日情报系统 - 论文推送、漫画思维导图",
+  "env": {
+    "MEDAI_DB": "corpus/corpus.db"
+  },
+  "instructions": "复制 medai-digest 目录到 ~/.openclaw/skills/。设置 MEDAI_DB 环境变量指向数据库路径。所有摘要生成和深度分析由龙虾自身模型完成，无需额外 API key。"
+}
