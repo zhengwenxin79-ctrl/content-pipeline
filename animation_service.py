@@ -308,20 +308,23 @@ def _compress_image(image_bytes: bytes, max_side: int = 1200, quality: int = 85)
 
 
 def analyze_image_with_qwen(image_bytes: bytes, caption: str = "",
-                             fallback: bool = False) -> dict:
+                             fallback: bool = False,
+                             dashscope_key: str = None) -> dict:
     """
     调用 Qwen-VL-Max 分析图片结构。
     caption 传入图注文字时，用于辅助判断图类型和解释数学符号节点。
     fallback=True 时使用强制识别 prompt（不允许 skip）。
+    dashscope_key: 用户自己的 key，不传则用系统 key。
     返回 graph dict，或 {"skip": True, "reason": "..."}。
     """
     from openai import OpenAI
 
-    if not DASHSCOPE_API_KEY:
+    key = dashscope_key or DASHSCOPE_API_KEY
+    if not key:
         raise ValueError("DASHSCOPE_API_KEY 未配置")
 
     client = OpenAI(
-        api_key=DASHSCOPE_API_KEY,
+        api_key=key,
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
 
@@ -381,14 +384,16 @@ _VERIFY_PROMPT = """这张图片中已识别出若干节点，下方列出了每
 只输出 JSON，不要任何说明文字。"""
 
 
-def _verify_node_positions(image_bytes: bytes, nodes: list) -> list:
+def _verify_node_positions(image_bytes: bytes, nodes: list,
+                            dashscope_key: str = None) -> list:
     """
     Pass-2 坐标校准：将原图 + Pass-1 估算坐标一起发给 Qwen，
     让它对照图片逐个核对并修正偏差超过 0.03 的坐标。
     失败时静默返回原始节点列表（不中断流程）。
     """
     from openai import OpenAI
-    if not DASHSCOPE_API_KEY or not nodes:
+    key = dashscope_key or DASHSCOPE_API_KEY
+    if not key or not nodes:
         return nodes
 
     # 构建节点描述（只传 id、label、label_zh、当前 x/y）
@@ -400,7 +405,7 @@ def _verify_node_positions(image_bytes: bytes, nodes: list) -> list:
     prompt = _VERIFY_PROMPT.format(nodes_list=nodes_desc)
 
     client = OpenAI(
-        api_key=DASHSCOPE_API_KEY,
+        api_key=key,
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
     b64 = base64.b64encode(_compress_image(image_bytes)).decode()
@@ -635,16 +640,18 @@ def _clean_html(text: str) -> str:
     return text.strip()
 
 
-def _fetch_knowledge(graph_json: dict, abstract: str = "") -> tuple:
+def _fetch_knowledge(graph_json: dict, abstract: str = "",
+                     deepseek_key: str = None) -> tuple:
     """
     调用 DeepSeek 同时生成「整体导读 summary」和「每节点知识卡片」。
     返回 (summary_text, nodes_dict)；失败时返回 ("", {})。
     nodes_dict 形如 {"n1": {"desc": ..., "role": ...}, ...}
     """
     from openai import OpenAI
-    if not DEEPSEEK_API_KEY:
+    key = deepseek_key or DEEPSEEK_API_KEY
+    if not key:
         return "", {}
-    client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+    client = OpenAI(api_key=key, base_url="https://api.deepseek.com")
     nodes_brief = [
         {"id": n["id"], "label": n["label"], "label_zh": n.get("label_zh", ""), "type": n.get("type", "")}
         for n in graph_json.get("nodes", [])
@@ -668,13 +675,14 @@ def _fetch_knowledge(graph_json: dict, abstract: str = "") -> tuple:
 
 
 def generate_animation_html(graph_json: dict, image_bytes: bytes = None,
-                            abstract: str = "") -> str:
+                            abstract: str = "",
+                            deepseek_key: str = None) -> str:
     """
     主入口：原图叠加交互热区模式（image_bytes 存在时）。
     abstract 传入论文摘要时，知识卡片将结合论文内容生成论文专属解读。
     DeepSeek 生成的整体导读会替换 Qwen 给出的一句话 overall_description。
     """
-    summary, knowledge = _fetch_knowledge(graph_json, abstract)
+    summary, knowledge = _fetch_knowledge(graph_json, abstract, deepseek_key=deepseek_key)
     if summary:
         graph_json = {**graph_json, "overall_description": summary}
     if image_bytes:
@@ -755,7 +763,28 @@ body{{font-family:-apple-system,"PingFang SC",sans-serif;background:#f8fafc;colo
 .main{{display:flex;height:calc(100vh - 46px);overflow:hidden}}
 .img-scroll{{flex:0 0 62%;overflow:auto;background:#e2e8f0}}
 .img-positioner{{position:relative;display:inline-block;min-width:100%}}
-.img-positioner img{{display:block;width:100%}}
+.img-positioner img{{display:block;width:100%;cursor:zoom-in}}
+.zoom-btn{{background:none;border:1px solid #d6bcfa;color:#6b46c1;padding:5px 12px;
+           border-radius:8px;cursor:pointer;font-size:12px}}
+.zoom-btn:hover{{background:#faf5ff}}
+/* Lightbox 全屏放大查看 */
+.lb-overlay{{position:fixed;inset:0;background:rgba(15,15,30,.92);z-index:9999;
+             display:none;align-items:center;justify-content:center;
+             overflow:auto;padding:20px;cursor:zoom-out}}
+.lb-overlay.show{{display:flex}}
+.lb-img{{max-width:none;display:block;margin:auto;cursor:grab;user-select:none;
+        box-shadow:0 10px 40px rgba(0,0,0,.5);background:white;
+        transform-origin:center center;transition:transform .05s linear}}
+.lb-img.dragging{{cursor:grabbing;transition:none}}
+.lb-toolbar{{position:fixed;top:14px;right:14px;display:flex;gap:8px;z-index:10001}}
+.lb-btn{{background:rgba(255,255,255,.15);color:white;border:1px solid rgba(255,255,255,.3);
+        padding:6px 12px;border-radius:8px;cursor:pointer;font-size:13px;
+        backdrop-filter:blur(8px);min-width:42px}}
+.lb-btn:hover{{background:rgba(255,255,255,.28)}}
+.lb-hint{{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+         color:rgba(255,255,255,.75);font-size:12px;z-index:10001;
+         background:rgba(0,0,0,.4);padding:5px 14px;border-radius:14px;
+         backdrop-filter:blur(8px);pointer-events:none}}
 /* 热区：默认小圆点，hover 展开标签 */
 .hotspot{{position:absolute;transform:translate(-50%,-50%);cursor:pointer;
           width:14px;height:14px;border-radius:50%;
@@ -805,6 +834,7 @@ body{{font-family:-apple-system,"PingFang SC",sans-serif;background:#f8fafc;colo
 <body>
 <div class="toolbar">
   <span class="toolbar-title">🔬 {title_safe}</span>
+  <button class="zoom-btn" onclick="openLightbox()">🔍 放大原图</button>
   <button class="play-btn" id="playBtn" onclick="togglePlay()">▶ 逐步播放</button>
   <button class="collapse-btn" id="collapseBtn" onclick="toggleCollapse()">▲ 折叠</button>
 </div>
@@ -829,6 +859,17 @@ body{{font-family:-apple-system,"PingFang SC",sans-serif;background:#f8fafc;colo
       </div>
     </div>
   </div>
+</div>
+<!-- Lightbox 全屏放大 -->
+<div class="lb-overlay" id="lbOverlay" onclick="lbBgClick(event)">
+  <div class="lb-toolbar">
+    <button class="lb-btn" onclick="lbZoom(-0.25);event.stopPropagation()">－</button>
+    <button class="lb-btn" id="lbScale" onclick="lbReset();event.stopPropagation()">100%</button>
+    <button class="lb-btn" onclick="lbZoom(0.25);event.stopPropagation()">＋</button>
+    <button class="lb-btn" onclick="closeLightbox();event.stopPropagation()">✕ 关闭</button>
+  </div>
+  <img class="lb-img" id="lbImg" alt="放大查看">
+  <div class="lb-hint">滚轮缩放 · 拖拽平移 · ESC / 点击空白关闭</div>
 </div>
 <script>
 const NODES = {nodes_js};
@@ -970,6 +1011,94 @@ function toggleCollapse() {{
   document.getElementById('mainArea').style.display = collapsed ? 'none' : 'flex';
   document.getElementById('collapseBtn').textContent = collapsed ? '▼ 展开' : '▲ 折叠';
 }}
+
+// ─── Lightbox 放大查看 ───────────────────────────────
+let lbScale = 1, lbTx = 0, lbTy = 0;
+let lbDragging = false, lbLastX = 0, lbLastY = 0;
+
+function openLightbox() {{
+  const overlay = document.getElementById('lbOverlay');
+  const img = document.getElementById('lbImg');
+  const main = document.getElementById('mainImg');
+  if (!main || !overlay || !img) return;
+  img.src = main.src;
+  lbScale = 1; lbTx = 0; lbTy = 0;
+  applyLbTransform();
+  overlay.classList.add('show');
+  document.body.style.overflow = 'hidden';
+}}
+
+function closeLightbox() {{
+  const overlay = document.getElementById('lbOverlay');
+  if (overlay) overlay.classList.remove('show');
+  document.body.style.overflow = '';
+}}
+
+function lbBgClick(e) {{
+  if (e.target.id === 'lbOverlay') closeLightbox();
+}}
+
+function applyLbTransform() {{
+  const img = document.getElementById('lbImg');
+  if (!img) return;
+  img.style.transform = `translate(${{lbTx}}px, ${{lbTy}}px) scale(${{lbScale}})`;
+  const lbl = document.getElementById('lbScale');
+  if (lbl) lbl.textContent = Math.round(lbScale * 100) + '%';
+}}
+
+function lbZoom(delta) {{
+  lbScale = Math.max(0.25, Math.min(6, lbScale + delta));
+  applyLbTransform();
+}}
+
+function lbReset() {{
+  lbScale = 1; lbTx = 0; lbTy = 0;
+  applyLbTransform();
+}}
+
+document.addEventListener('keydown', e => {{
+  const overlay = document.getElementById('lbOverlay');
+  if (!overlay || !overlay.classList.contains('show')) return;
+  if (e.key === 'Escape') closeLightbox();
+  else if (e.key === '+' || e.key === '=') lbZoom(0.25);
+  else if (e.key === '-' || e.key === '_') lbZoom(-0.25);
+  else if (e.key === '0') lbReset();
+}});
+
+(function setupLb() {{
+  const img = document.getElementById('lbImg');
+  if (!img) return;
+  img.addEventListener('wheel', e => {{
+    e.preventDefault();
+    lbZoom(e.deltaY < 0 ? 0.15 : -0.15);
+  }}, {{passive:false}});
+  img.addEventListener('mousedown', e => {{
+    lbDragging = true; lbLastX = e.clientX; lbLastY = e.clientY;
+    img.classList.add('dragging');
+    e.preventDefault();
+  }});
+  document.addEventListener('mousemove', e => {{
+    if (!lbDragging) return;
+    lbTx += e.clientX - lbLastX;
+    lbTy += e.clientY - lbLastY;
+    lbLastX = e.clientX;
+    lbLastY = e.clientY;
+    applyLbTransform();
+  }});
+  document.addEventListener('mouseup', () => {{
+    lbDragging = false;
+    img.classList.remove('dragging');
+  }});
+}})();
+
+// 主图非热区区域点击放大
+(function() {{
+  const layer = document.getElementById('hotspotsLayer');
+  if (!layer) return;
+  layer.addEventListener('click', e => {{
+    if (e.target === layer) openLightbox();
+  }});
+}})();
 </script>
 </body></html>"""
 
@@ -1014,14 +1143,17 @@ def _fallback_html(graph: dict) -> str:
 # ── 完整流程入口 ───────────────────────────────────────────────────────────────
 
 def process_image(image_bytes: bytes, abstract: str = "", caption: str = "",
-                  fallback: bool = False) -> dict:
+                  fallback: bool = False,
+                  dashscope_key: str = None, deepseek_key: str = None) -> dict:
     """
     单张图片完整流程：Qwen 识别 → DeepSeek 生成 HTML。
     caption 传入图注文字时，Qwen 用其辅助判断图类型和解释符号节点。
     fallback=True 时使用强制识别 prompt，不允许 skip。
+    dashscope_key / deepseek_key: 用户自带 key，不传则用系统 key。
     """
     try:
-        graph = analyze_image_with_qwen(image_bytes, caption=caption, fallback=fallback)
+        graph = analyze_image_with_qwen(image_bytes, caption=caption,
+                                        fallback=fallback, dashscope_key=dashscope_key)
     except Exception as e:
         return {"ok": False, "error": f"Qwen 识图失败：{e}"}
 
@@ -1035,7 +1167,8 @@ def process_image(image_bytes: bytes, abstract: str = "", caption: str = "",
     graph = _normalize_node_ids(graph)
 
     try:
-        html = generate_animation_html(graph, image_bytes=image_bytes, abstract=abstract)
+        html = generate_animation_html(graph, image_bytes=image_bytes, abstract=abstract,
+                                       deepseek_key=deepseek_key)
         return {"ok": True, "html": html, "graph": graph}
     except Exception as e:
         fallback_html = _fallback_html(graph)
@@ -1068,10 +1201,13 @@ def _extract_abstract(pdf_bytes: bytes) -> str:
 
 
 def process_article_pdf(article_url: str, progress_cb=None,
-                        abstract: str = "") -> List[dict]:
+                        abstract: str = "",
+                        dashscope_key: str = None,
+                        deepseek_key: str = None) -> List[dict]:
     """
     文章 URL 完整流程：推导 PDF URL → 下载 → 提取图片 → 逐张处理。
     abstract 传入时知识卡片将结合论文摘要生成论文专属解读。
+    dashscope_key / deepseek_key: 用户自带 key，不传则用系统 key。
     """
     def _cb(msg):
         if progress_cb:
@@ -1144,7 +1280,8 @@ def process_article_pdf(article_url: str, progress_cb=None,
         _cb(f"🤖 Qwen 扫描第 {i+1}/{len(images)} 张图"
             + (f"（已跳过 {skipped} 张非机制图）" if skipped else "")
             + ("（含图注）" if caption else "") + "...")
-        result = process_image(img_bytes, abstract=abstract, caption=caption)
+        result = process_image(img_bytes, abstract=abstract, caption=caption,
+                               dashscope_key=dashscope_key, deepseek_key=deepseek_key)
         result["image_hash"] = image_hash(img_bytes)
         result["image_index"] = i
 
@@ -1170,7 +1307,8 @@ def process_article_pdf(article_url: str, progress_cb=None,
         _cb(f"⚡ 未识别到标准机制图，对候选图进行强制识别（共 {len(fallback_candidates)} 张）...")
         for img_bytes, caption, i in fallback_candidates[:3]:
             _cb(f"🔄 强制识别第 {i+1} 张图...")
-            result = process_image(img_bytes, abstract=abstract, caption=caption, fallback=True)
+            result = process_image(img_bytes, abstract=abstract, caption=caption, fallback=True,
+                                   dashscope_key=dashscope_key, deepseek_key=deepseek_key)
             result["image_hash"] = image_hash(img_bytes)
             result["image_index"] = i
             if result.get("skipped"):

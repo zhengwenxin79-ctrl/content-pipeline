@@ -13,8 +13,12 @@ from pathlib import Path
 
 def get_conn(db_path: str = "corpus/corpus.db") -> sqlite3.Connection:
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=10.0)
     conn.row_factory = sqlite3.Row
+    # WAL: 允许并发读 + 单写者不阻塞读者；busy_timeout: 写锁竞争时等待而非立即报错
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     return conn
 
 
@@ -208,6 +212,22 @@ def init_db(db_path: str = "corpus/corpus.db"):
             UNIQUE(profile_id, article_id)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_relevance_profile ON user_article_relevance(profile_id)",
+        """CREATE TABLE IF NOT EXISTS user_api_keys (
+            user_id      INTEGER NOT NULL,
+            provider     TEXT NOT NULL,
+            encrypted_key TEXT NOT NULL,
+            key_hint     TEXT NOT NULL,
+            created_at   INTEGER NOT NULL,
+            last_used_at INTEGER,
+            PRIMARY KEY (user_id, provider)
+        )""",
+        """CREATE TABLE IF NOT EXISTS user_quota_usage (
+            user_id  INTEGER NOT NULL,
+            feature  TEXT NOT NULL,
+            date     TEXT NOT NULL,
+            count    INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (user_id, feature, date)
+        )""",
     ]
     for sql in migrations:
         try:

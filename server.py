@@ -2121,6 +2121,59 @@ HTML = """<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- API Keys 设置 -->
+      <div style="background:white;border-radius:12px;padding:20px 24px;box-shadow:0 1px 6px rgba(0,0,0,0.07);margin-top:16px" id="apiKeysSection">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div>
+            <div style="font-size:15px;font-weight:700;color:#2d3748">🔑 我的 API Keys <span style="font-size:12px;font-weight:400;color:#a0aec0">（可选）</span></div>
+            <div style="font-size:12px;color:#718096;margin-top:3px">填入自己的 key 后将不消耗免费额度，每日动画解析次数不受限</div>
+          </div>
+          <div id="quotaBadge" style="font-size:12px;padding:4px 10px;border-radius:20px;background:#f7fafc;color:#718096;border:1px solid #e2e8f0"></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <!-- DeepSeek -->
+          <div style="background:#f7fafc;border-radius:10px;padding:12px 14px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+              <div>
+                <span style="font-size:13px;font-weight:600;color:#2d3748">DeepSeek</span>
+                <span style="font-size:11px;color:#a0aec0;margin-left:6px">用于生成动画 HTML</span>
+              </div>
+              <div id="deepseekStatus" style="font-size:12px;color:#a0aec0">未设置</div>
+            </div>
+            <div style="display:flex;gap:8px">
+              <input id="deepseekKeyInput" type="password" placeholder="sk-..."
+                style="flex:1;padding:7px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px;outline:none;font-family:monospace"
+                onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e2e8f0'">
+              <button onclick="saveApiKey('deepseek')"
+                style="background:#667eea;color:white;border:none;padding:7px 14px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">保存</button>
+              <button id="deepseekDelBtn" onclick="deleteApiKey('deepseek')" style="display:none;background:#fff5f5;color:#e53e3e;border:1.5px solid #fed7d7;padding:7px 12px;border-radius:7px;font-size:12px;cursor:pointer">删除</button>
+            </div>
+            <div style="font-size:11px;color:#a0aec0;margin-top:5px">申请地址：<a href="https://platform.deepseek.com/api_keys" target="_blank" style="color:#667eea">platform.deepseek.com</a></div>
+          </div>
+          <!-- DashScope -->
+          <div style="background:#f7fafc;border-radius:10px;padding:12px 14px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+              <div>
+                <span style="font-size:13px;font-weight:600;color:#2d3748">DashScope（阿里云百炼）</span>
+                <span style="font-size:11px;color:#a0aec0;margin-left:6px">用于识别论文图片</span>
+              </div>
+              <div id="dashscopeStatus" style="font-size:12px;color:#a0aec0">未设置</div>
+            </div>
+            <div style="display:flex;gap:8px">
+              <input id="dashscopeKeyInput" type="password" placeholder="sk-..."
+                style="flex:1;padding:7px 10px;border:1.5px solid #e2e8f0;border-radius:7px;font-size:13px;outline:none;font-family:monospace"
+                onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e2e8f0'">
+              <button onclick="saveApiKey('dashscope')"
+                style="background:#667eea;color:white;border:none;padding:7px 14px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">保存</button>
+              <button id="dashscopeDelBtn" onclick="deleteApiKey('dashscope')" style="display:none;background:#fff5f5;color:#e53e3e;border:1.5px solid #fed7d7;padding:7px 12px;border-radius:7px;font-size:12px;cursor:pointer">删除</button>
+            </div>
+            <div style="font-size:11px;color:#a0aec0;margin-top:5px">申请地址：<a href="https://bailian.console.aliyun.com/" target="_blank" style="color:#667eea">bailian.console.aliyun.com</a>（免费额度充足）</div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:#a0aec0;margin-top:10px">🔒 key 加密存储于服务器，仅你本人可见，我们不会用你的 key 做任何其他事</div>
+        <div id="apiKeyMsg" style="font-size:13px;display:none;margin-top:8px;padding:8px 12px;border-radius:6px"></div>
+      </div>
+
       <!-- 文章预览区 -->
       <div id="subPreviewArea" style="display:none">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
@@ -3145,8 +3198,16 @@ async function _startAnimTask(articleId, payload) {
     });
     const data = await res.json();
     if (!data.ok) {
-      if (progressText) progressText.textContent = '启动失败：' + data.msg;
-      if (uploadArea)   uploadArea.style.display  = 'block';
+      if (data.quota_exceeded) {
+        const goSettings = confirm(data.msg + '\\n\\n点击「确定」前往设置页填入自己的 API key，可解除限制。');
+        if (goSettings) {
+          document.getElementById('settingsBtn')?.click();
+          setTimeout(() => document.getElementById('apiKeysSection')?.scrollIntoView({behavior:'smooth'}), 400);
+        }
+      } else {
+        if (progressText) progressText.textContent = '启动失败：' + data.msg;
+      }
+      if (uploadArea) uploadArea.style.display = 'block';
       return;
     }
     _pollAnimTask(articleId, data.task_id, progressText, progressDiv, uploadArea);
@@ -4074,6 +4135,7 @@ async function initSubscribePage() {
   content.style.display = 'block';
   document.getElementById('subEmailDisplay').textContent = _currentUser.email;
   await loadSubscriptions();
+  loadApiKeys();
 }
 
 async function loadSubscriptions() {
@@ -4128,6 +4190,88 @@ async function subSaveKeywords() {
   const data = await res.json();
   showSubMsg(data.msg, data.ok);
   if (data.ok) await loadSubscriptions();
+}
+
+// ── BYOK：API Keys 管理 ──────────────────────────────────────
+async function loadApiKeys() {
+  const [keysRes, quotaRes] = await Promise.all([
+    fetch('/api/user/api-keys'),
+    fetch('/api/user/quota'),
+  ]);
+  if (!keysRes.ok || !quotaRes.ok) return;
+  const { keys } = await keysRes.json();
+  const { animation } = await quotaRes.json();
+
+  // 更新各 provider 状态
+  ['deepseek', 'dashscope'].forEach(p => {
+    const statusEl = document.getElementById(p + 'Status');
+    const delBtn   = document.getElementById(p + 'DelBtn');
+    const input    = document.getElementById(p + 'KeyInput');
+    if (keys[p]) {
+      statusEl.textContent = '✅ ' + keys[p];
+      statusEl.style.color = '#38a169';
+      delBtn.style.display = '';
+      input.placeholder = '重新输入以更新...';
+    } else {
+      statusEl.textContent = '未设置';
+      statusEl.style.color = '#a0aec0';
+      delBtn.style.display = 'none';
+      input.placeholder = 'sk-...';
+    }
+  });
+
+  // 配额 badge
+  const badge = document.getElementById('quotaBadge');
+  if (badge) {
+    if (animation.unlimited) {
+      badge.textContent = '✅ 使用自己的 key，不限次数';
+      badge.style.background = '#f0fff4';
+      badge.style.color = '#38a169';
+      badge.style.borderColor = '#c6f6d5';
+    } else {
+      const left = Math.max(0, animation.limit - animation.used);
+      badge.textContent = `今日免费剩余：${left}/${animation.limit} 次`;
+      badge.style.background = left > 0 ? '#f7fafc' : '#fff5f5';
+      badge.style.color = left > 0 ? '#718096' : '#e53e3e';
+      badge.style.borderColor = left > 0 ? '#e2e8f0' : '#fed7d7';
+    }
+  }
+}
+
+async function saveApiKey(provider) {
+  const input = document.getElementById(provider + 'KeyInput');
+  const key = input.value.trim();
+  if (!key) { showApiKeyMsg('请输入 key', false); return; }
+  showApiKeyMsg('⏳ 验证中...', null);
+  const res = await fetch('/api/user/api-keys', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ provider, key }),
+  });
+  const data = await res.json();
+  if (data.ok) {
+    input.value = '';
+    showApiKeyMsg('✅ 保存成功：' + data.hint, true);
+    loadApiKeys();
+  } else {
+    showApiKeyMsg('❌ ' + data.msg, false);
+  }
+}
+
+async function deleteApiKey(provider) {
+  if (!confirm('确定删除该 key？删除后将恢复免费配额模式。')) return;
+  await fetch('/api/user/api-keys?provider=' + provider, { method: 'DELETE' });
+  showApiKeyMsg('已删除', true);
+  loadApiKeys();
+}
+
+function showApiKeyMsg(msg, ok) {
+  const el = document.getElementById('apiKeyMsg');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = 'block';
+  el.style.background = ok === true ? '#f0fff4' : ok === false ? '#fff5f5' : '#fffbeb';
+  el.style.color = ok === true ? '#276749' : ok === false ? '#c53030' : '#744210';
 }
 
 // ── 研究档案管理 ─────────────────────────────────────────────
@@ -5578,6 +5722,25 @@ class Handler(BaseHTTPRequestHandler):
             task = _anim_tasks.get(task_id, {"status": "not_found", "progress": "", "results": []})
             self.send_json(task)
 
+        # ── BYOK：查询用户 key 列表（只返回 hint）────────────────────
+        elif path == "/api/user/api-keys":
+            user = self._require_login()
+            if not user: return
+            import byok as _byok
+            self.send_json({"ok": True, "keys": _byok.list_user_keys(user["id"], DB_PATH)})
+
+        # ── BYOK：查询配额使用情况 ───────────────────────────────────
+        elif path == "/api/user/quota":
+            user = self._require_login()
+            if not user: return
+            import byok as _byok
+            uid = user["id"]
+            ds_key = _byok.get_user_key(uid, "dashscope", DB_PATH)
+            dp_key = _byok.get_user_key(uid, "deepseek",  DB_PATH)
+            has_own = bool(ds_key or dp_key)
+            status = _byok.get_quota_status(uid, "animation", has_own, DB_PATH)
+            self.send_json({"ok": True, "animation": status})
+
         else:
             self.send_response(404)
             self.end_headers()
@@ -5598,6 +5761,17 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         if self.path.startswith("/api/research-profiles/"):
             self._handle_profile_method()
+        elif self.path.startswith("/api/user/api-keys"):
+            user = self._require_login()
+            if not user: return
+            from urllib.parse import parse_qs, urlparse
+            qs = parse_qs(urlparse(self.path).query)
+            provider = qs.get("provider", [""])[0]
+            if provider not in ("deepseek", "dashscope"):
+                self.send_json({"ok": False, "msg": "provider 必须是 deepseek 或 dashscope"}); return
+            import byok as _byok
+            _byok.delete_user_key(user["id"], provider, DB_PATH)
+            self.send_json({"ok": True})
         else:
             self.send_error(405)
 
@@ -6137,7 +6311,8 @@ class Handler(BaseHTTPRequestHandler):
 
         # ── 动画：上传图片或触发 PDF 自动下载 ───────────────────────
         elif self.path == "/api/animation/upload":
-            if not self._require_login():
+            user = self._require_login()
+            if not user:
                 return
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -6154,11 +6329,23 @@ class Handler(BaseHTTPRequestHandler):
             if not article_id:
                 self.send_json({"ok": False, "msg": "缺少 article_id"}); return
 
+            # ── BYOK：取用户自己的 key，没有则走免费配额 ──
+            import byok as _byok
+            user_id = user["id"]
+            _ds_key = _byok.get_user_key(user_id, "dashscope", DB_PATH)
+            _dp_key = _byok.get_user_key(user_id, "deepseek",  DB_PATH)
+            _has_own = bool(_ds_key or _dp_key)
+            try:
+                _byok.check_and_consume(user_id, "animation", _has_own, DB_PATH)
+            except _byok.QuotaExceeded as _qe:
+                self.send_json({"ok": False, "msg": str(_qe), "quota_exceeded": True}); return
+
             import time as _time
             task_id = str(uuid.uuid4())
             _anim_tasks[task_id] = {"status": "running", "progress": "准备中...", "results": [], "_ts": _time.time()}
 
-            def _run_animation(task_id, article_id, image_b64, article_url, abstract):
+            def _run_animation(task_id, article_id, image_b64, article_url, abstract,
+                               ds_key, dp_key):
                 import animation_service
                 # 保持 animation_service 能读到当前环境变量
                 import os as _os
@@ -6175,13 +6362,16 @@ class Handler(BaseHTTPRequestHandler):
                     if image_b64:
                         _prog("🔍 Qwen-VL-Max 正在识别图片结构...")
                         img_bytes = __import__("base64").b64decode(image_b64)
-                        result = animation_service.process_image(img_bytes, abstract=abstract)
+                        result = animation_service.process_image(
+                            img_bytes, abstract=abstract,
+                            dashscope_key=ds_key, deepseek_key=dp_key)
                         result["image_hash"] = animation_service.image_hash(img_bytes)
                         result["image_index"] = 0
                         raw_results = [result]
                     else:
                         raw_results = animation_service.process_article_pdf(
-                            article_url, progress_cb=_prog, abstract=abstract
+                            article_url, progress_cb=_prog, abstract=abstract,
+                            dashscope_key=ds_key, deepseek_key=dp_key
                         )
 
                     print(f"[anim] raw_results count={len(raw_results)} article_id={article_id}", file=_sys.stderr)
@@ -6259,7 +6449,8 @@ class Handler(BaseHTTPRequestHandler):
 
             try:
                 t = threading.Thread(target=_run_animation,
-                                     args=(task_id, article_id, image_b64, article_url, abstract),
+                                     args=(task_id, article_id, image_b64, article_url, abstract,
+                                           _ds_key, _dp_key),
                                      daemon=True)
                 t.start()
                 self.send_json({"ok": True, "task_id": task_id})
@@ -6268,6 +6459,28 @@ class Handler(BaseHTTPRequestHandler):
                 print(f"[animation/upload] handler 异常: {_e}", file=_sys.stderr)
                 _tb.print_exc(file=_sys.stderr)
                 self.send_json({"ok": False, "msg": f"服务器错误: {_e}"})
+
+        # ── BYOK API 端点 ─────────────────────────────────────────────────────
+        elif self.path == "/api/user/api-keys":
+            user = self._require_login()
+            if not user: return
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                self.send_json({"ok": False, "msg": "请求体解析失败"}); return
+            import byok as _byok
+            provider = body.get("provider", "")
+            raw_key  = body.get("key", "").strip()
+            if provider not in ("deepseek", "dashscope"):
+                self.send_json({"ok": False, "msg": "provider 必须是 deepseek 或 dashscope"}); return
+            if not raw_key:
+                self.send_json({"ok": False, "msg": "key 不能为空"}); return
+            ok, err = _byok.validate_key(provider, raw_key)
+            if not ok:
+                self.send_json({"ok": False, "msg": err}); return
+            _byok.save_user_key(user["id"], provider, raw_key, DB_PATH)
+            self.send_json({"ok": True, "hint": f"{raw_key[:6]}...{raw_key[-4:]}"})
 
         else:
             self.send_response(404)
