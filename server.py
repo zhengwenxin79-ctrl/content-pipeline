@@ -1443,8 +1443,8 @@ def get_digest_data(days=2):
     """, (f'-{days} days',)).fetchall()
     conn.close()
 
-    # 医疗相关过滤
-    rows = [r for r in rows if _is_medical(r["title"], r["content"], r["source_name"])]
+    # 已通过 score_articles 的「医疗+AI 双重」LLM 评分（quality_score>=5.5），
+    # 不再做关键词二次过滤——关键词列表会漏掉 EEG/suicide risk/protein quantum yield 等子方向。
 
     result = {"顶刊论文": [], "大组动态": [], "商业落地": [], "开源项目": [], "未分类": []}
     all_articles = []
