@@ -30,6 +30,44 @@ def chat(client, prompt: str, max_tokens: int = 2000) -> str:
     return resp.choices[0].message.content
 
 
+_TOP_JOURNAL_KEYS = ("arxiv", "nature", "lancet", "nejm", "jama",
+                     "ieee", "npj", "medical image")
+_COMMERCIAL_KEYS = ("stat news", "mit technology", "healthcare it",
+                    "techcrunch", "venturebeat")
+
+
+def _classify_by_source(source: str, source_name: str) -> str:
+    """根据来源启发式归桶，不调用 LLM。"""
+    if (source or "").lower() == "github":
+        return "开源项目"
+    name = (source_name or "").lower()
+    if any(k in name for k in _TOP_JOURNAL_KEYS):
+        return "顶刊论文"
+    if any(k in name for k in _COMMERCIAL_KEYS):
+        return "商业落地"
+    return "大组动态"
+
+
+def auto_classify_by_source(db_path: str = "corpus/corpus.db") -> int:
+    """对所有 category 为空的文章按 source_name 启发式补分类，返回更新数。"""
+    from db import get_conn
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT id, source, source_name FROM articles "
+            "WHERE category IS NULL OR category = ''"
+        ).fetchall()
+        updated = 0
+        for r in rows:
+            cat = _classify_by_source(r["source"], r["source_name"])
+            conn.execute("UPDATE articles SET category=? WHERE id=?", (cat, r["id"]))
+            updated += 1
+        conn.commit()
+        return updated
+    finally:
+        conn.close()
+
+
 def score_articles(limit: int = 20, db_path: str = "corpus/corpus.db"):
     """对未打分的外部文章进行质量评分，重点筛选对公众号选题有参考价值的内容"""
     from db import get_conn
@@ -44,22 +82,24 @@ def score_articles(limit: int = 20, db_path: str = "corpus/corpus.db"):
 
     if not rows:
         print("没有待评分的文章")
-        return
+    else:
+        client = get_client()
+        BATCH = 25
+        all_scored = 0
+        for batch_start in range(0, len(rows), BATCH):
+            batch = rows[batch_start:batch_start + BATCH]
+            articles_text = "\n\n".join([
+                f"ID:{r['id']} 标题:{r['title']}\n内容:{(r['content'] or '').strip()}"
+                for r in batch
+            ])
+            print(f"正在评分第 {batch_start+1}-{batch_start+len(batch)} 篇...")
+            _do_score_batch(client, articles_text, batch, db_path)
+            all_scored += len(batch)
+        print(f"\n✓ 共完成 {all_scored} 篇评分")
 
-    client = get_client()
-    # 每批最多25篇，避免JSON截断
-    BATCH = 25
-    all_scored = 0
-    for batch_start in range(0, len(rows), BATCH):
-        batch = rows[batch_start:batch_start + BATCH]
-        articles_text = "\n\n".join([
-            f"ID:{r['id']} 标题:{r['title']}\n内容:{(r['content'] or '').strip()}"
-            for r in batch
-        ])
-        print(f"正在评分第 {batch_start+1}-{batch_start+len(batch)} 篇...")
-        _do_score_batch(client, articles_text, batch, db_path)
-        all_scored += len(batch)
-    print(f"\n✓ 共完成 {all_scored} 篇评分")
+    n = auto_classify_by_source(db_path=db_path)
+    if n:
+        print(f"✓ 启发式补分类 {n} 篇（按 source_name 归桶）")
     return
 
 
