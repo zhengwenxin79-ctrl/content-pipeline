@@ -1691,13 +1691,31 @@ HTML = """<!DOCTYPE html>
   .anim-tab.active { background:#6b46c1;color:white;border-color:#6b46c1; }
   .anim-frame { width:100%;border:none;display:block;min-height:480px; }
   .anim-upload-area { padding:16px 14px;border-top:1px solid #e9d8fd; }
-  .anim-upload-label { font-size:12px;color:#718096;margin-bottom:8px;display:block; }
-  .anim-upload-row { display:flex;gap:8px;flex-wrap:wrap;align-items:center; }
-  .anim-file-btn { font-size:12px;padding:6px 14px;border-radius:8px;border:1px solid #d6bcfa;
-                   background:white;color:#6b46c1;cursor:pointer;font-weight:500; }
-  .anim-auto-btn { font-size:12px;padding:6px 14px;border-radius:8px;border:none;
-                   background:#6b46c1;color:white;cursor:pointer;font-weight:500; }
-  .anim-auto-btn:disabled { opacity:.5;cursor:not-allowed; }
+  .anim-upload-label { font-size:13px;color:#553c9a;margin-bottom:10px;display:block;font-weight:600; }
+  .anim-upload-row { display:flex;gap:10px;flex-wrap:wrap;align-items:center; }
+  /* 主按钮：紫色填充，醒目；用于：1) 支持自动 PDF 时的「自动提取」  2) 不支持自动 PDF 时的唯一上传入口 */
+  .anim-auto-btn, .anim-file-btn.primary {
+    font-size:13px;padding:9px 18px;border-radius:10px;border:none;
+    background:linear-gradient(135deg,#6b46c1,#553c9a);color:white;cursor:pointer;
+    font-weight:600;box-shadow:0 2px 8px rgba(107,70,193,.25);
+    transition:transform .15s ease, box-shadow .15s ease;
+    display:inline-flex;align-items:center;gap:4px;
+  }
+  .anim-auto-btn:hover, .anim-file-btn.primary:hover {
+    transform:translateY(-1px);box-shadow:0 4px 14px rgba(107,70,193,.35);
+  }
+  /* 次按钮：白底紫框，用于「自动提取」旁的「也可上传」 */
+  .anim-file-btn {
+    font-size:12px;padding:7px 14px;border-radius:8px;border:1.5px solid #d6bcfa;
+    background:white;color:#6b46c1;cursor:pointer;font-weight:500;
+    display:inline-flex;align-items:center;gap:4px;
+  }
+  .anim-file-btn:hover { background:#f5f0fc; }
+  .anim-auto-btn:disabled { opacity:.5;cursor:not-allowed;transform:none;box-shadow:none; }
+  .anim-source-notice {
+    font-size:12px;color:#9c4221;background:#fffaf0;border:1px solid #feb88f;
+    border-radius:8px;padding:8px 12px;margin-bottom:10px;line-height:1.6;
+  }
   .anim-progress { font-size:12px;color:#6b46c1;padding:10px 14px;
                    display:flex;align-items:center;gap:8px; }
   @keyframes anim-spin { to { transform:rotate(360deg); } }
@@ -3160,8 +3178,14 @@ function renderAnimPanel(articleId, articleUrl, animations) {
     <div class="anim-upload-area" id="anim-upload-${articleId}">
       <div id="anim-quota-hint-${articleId}">${renderQuotaHintHtml(window._animQuota)}</div>
       <span class="anim-upload-label">
-        ${animations.length ? '➕ 添加更多机制图' : '📤 解析论文机制图'}
+        ${animations.length ? '➕ 添加更多机制图' : (canAuto ? '👇 点击下方按钮开始解析' : '👇 上传论文截图开始解析')}
       </span>
+      ${!canAuto && !animations.length ? `
+        <div class="anim-source-notice">
+          ⚠️ 此论文来源暂不支持自动从 PDF 提取（仅 arXiv / bioRxiv / medRxiv / PMC 支持）<br>
+          请上传论文里的机制图截图（可在原文用截图工具框选图片）
+        </div>
+      ` : ''}
 
       <!-- 摘要输入（折叠式，可选） -->
       <details style="margin-bottom:10px">
@@ -3183,16 +3207,21 @@ function renderAnimPanel(articleId, articleUrl, animations) {
           <button class="anim-auto-btn" id="anim-auto-btn-${articleId}"
             data-url="${escHtml(articleUrl)}"
             onclick="triggerAutoPdf(${articleId})">
-            ⚡ 自动从 PDF 提取
-          </button>` : ''}
-        <label class="anim-file-btn">
-          🖼 上传 / 粘贴截图
-          <input type="file" accept="image/*" style="display:none"
-            onchange="uploadAnimImage(${articleId}, this)">
-        </label>
-        <span style="font-size:11px;color:#a0aec0">
-          ${canAuto ? '或' : ''}支持机制图截图（PNG/JPG）
-        </span>
+            ⚡ 一键自动解析（推荐）
+          </button>
+          <label class="anim-file-btn">
+            🖼 或上传截图
+            <input type="file" accept="image/*" style="display:none"
+              onchange="uploadAnimImage(${articleId}, this)">
+          </label>
+        ` : `
+          <label class="anim-file-btn primary">
+            🖼 上传论文截图开始解析
+            <input type="file" accept="image/*" style="display:none"
+              onchange="uploadAnimImage(${articleId}, this)">
+          </label>
+        `}
+        <span style="font-size:11px;color:#a0aec0">PNG / JPG</span>
       </div>
     </div>`;
 
