@@ -147,7 +147,7 @@ def main():
 
     # score
     p_score = subparsers.add_parser("score", help="AI评分筛选文章")
-    p_score.add_argument("--limit", type=int, default=20)
+    p_score.add_argument("--limit", type=int, default=1000)
 
     # score-users
     subparsers.add_parser("score-users", help="按用户研究档案打个性化相关性分")
