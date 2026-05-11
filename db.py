@@ -178,6 +178,8 @@ def init_db(db_path: str = "corpus/corpus.db"):
         "ALTER TABLE subscriptions ADD COLUMN research_direction TEXT DEFAULT ''",
         "ALTER TABLE articles ADD COLUMN ai_summary TEXT DEFAULT ''",
         "ALTER TABLE articles ADD COLUMN deep_analysis TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN reset_token TEXT",
+        "ALTER TABLE users ADD COLUMN reset_token_expires TEXT",
         """CREATE TABLE IF NOT EXISTS app_state (
             key   TEXT PRIMARY KEY,
             value TEXT
@@ -541,6 +543,58 @@ def login_user(email: str, password: str,
         if not row:
             return {"ok": False, "msg": "邮箱或密码错误"}
         return {"ok": True, "user": {"id": row["id"], "email": row["email"]}}
+    finally:
+        conn.close()
+
+
+def create_password_reset_token(email: str,
+                                ttl_minutes: int = 30,
+                                db_path: str = "corpus/corpus.db") -> str:
+    """为邮箱生成一次性重置 token 并写库。邮箱不存在时返回空串（调用方不要泄露这一信息）。"""
+    import secrets
+    from datetime import datetime, timezone, timedelta
+
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+        if not row:
+            return ""
+        token = secrets.token_urlsafe(32)
+        expires = (datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute(
+            "UPDATE users SET reset_token = ?, reset_token_expires = ? WHERE id = ?",
+            (token, expires, row["id"])
+        )
+        conn.commit()
+        return token
+    finally:
+        conn.close()
+
+
+def reset_password_with_token(token: str, new_password: str,
+                              db_path: str = "corpus/corpus.db") -> dict:
+    """校验 token+过期时间，通过则更新密码并失效 token。"""
+    from datetime import datetime, timezone
+
+    if not token or len(new_password) < 6:
+        return {"ok": False, "msg": "参数无效（密码至少 6 位）"}
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT id, email, reset_token_expires FROM users WHERE reset_token = ?",
+            (token,)
+        ).fetchone()
+        if not row:
+            return {"ok": False, "msg": "链接无效或已被使用"}
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        if (row["reset_token_expires"] or "") < now:
+            return {"ok": False, "msg": "链接已过期，请重新申请"}
+        conn.execute(
+            "UPDATE users SET password_hash=?, reset_token=NULL, reset_token_expires=NULL WHERE id=?",
+            (_hash_password(new_password), row["id"])
+        )
+        conn.commit()
+        return {"ok": True, "email": row["email"]}
     finally:
         conn.close()
 

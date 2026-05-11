@@ -133,6 +133,7 @@ _RATE_RULES = [
     ("/api/animation/upload",  5,  60),   # 上传图片触发：5次/分钟
     ("/api/auth/register",     5, 300),   # 注册：5次/5分钟
     ("/api/auth/login",        10, 60),   # 登录：10次/分钟
+    ("/api/auth/forgot",       3, 300),   # 忘记密码：3次/5分钟
     ("/api/run",               2,  60),   # 手动触发爬取：2次/分钟
     ("/api/digest",            60, 60),   # 防轮询轰炸：60次/分钟
 ]
@@ -2318,6 +2319,26 @@ HTML = """<!DOCTYPE html>
       <p id="authSwitchHint" style="text-align:center;font-size:13px;color:#718096;margin:0">
         没有账号？<a href="#" onclick="switchAuthTab('register');return false" style="color:#667eea;font-weight:600">立即注册</a>
       </p>
+      <p id="authForgotHint" style="text-align:center;font-size:12px;color:#a0aec0;margin:0">
+        <a href="#" onclick="showForgotForm();return false" style="color:#a0aec0">忘记密码？</a>
+      </p>
+      <!-- 忘记密码表单（默认隐藏） -->
+      <div id="forgotForm" style="display:none;background:#faf5ff;border:1.5px solid #d6bcfa;border-radius:10px;padding:14px;margin-top:4px">
+        <div style="font-size:13px;font-weight:600;color:#553c9a;margin-bottom:10px">找回密码</div>
+        <input id="forgotEmail" type="email" placeholder="输入注册邮箱"
+          style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;outline:none;margin-bottom:8px">
+        <div style="display:flex;gap:8px">
+          <button onclick="doForgot()"
+            style="flex:1;background:#6b46c1;color:white;border:none;padding:8px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">
+            发送重置邮件
+          </button>
+          <button onclick="hideForgotForm()"
+            style="background:none;border:1.5px solid #d6bcfa;color:#6b46c1;padding:8px 12px;border-radius:8px;font-size:13px;cursor:pointer">
+            取消
+          </button>
+        </div>
+        <div id="forgotMsg" style="font-size:12px;margin-top:8px;display:none"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -2724,6 +2745,36 @@ async function doAuth() {
     showAuthMsg('网络错误', 'error');
   }
   btn.disabled = false; btn.textContent = _authMode === 'login' ? '登录' : '注册';
+}
+
+function showForgotForm() {
+  document.getElementById('forgotForm').style.display = 'block';
+  document.getElementById('authForgotHint').style.display = 'none';
+  document.getElementById('forgotEmail').focus();
+}
+function hideForgotForm() {
+  document.getElementById('forgotForm').style.display = 'none';
+  document.getElementById('authForgotHint').style.display = 'block';
+  document.getElementById('forgotMsg').style.display = 'none';
+  document.getElementById('forgotEmail').value = '';
+}
+async function doForgot() {
+  const email = document.getElementById('forgotEmail').value.trim();
+  const msgEl = document.getElementById('forgotMsg');
+  if (!email) { msgEl.style.cssText='display:block;color:#c53030'; msgEl.textContent='请输入邮箱'; return; }
+  try {
+    const r = await fetch('/api/auth/forgot', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email})
+    });
+    const d = await r.json();
+    msgEl.style.cssText = 'display:block;color:#276749';
+    msgEl.textContent = d.msg || '已发送，请查收邮件（含垃圾邮件）';
+  } catch(e) {
+    msgEl.style.cssText = 'display:block;color:#c53030';
+    msgEl.textContent = '发送失败，请稍后重试';
+  }
 }
 
 function showAuthMsg(msg, type) {
@@ -5035,6 +5086,84 @@ load();
 </body>
 </html>"""
 
+RESET_PASSWORD_HTML = """<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>重置密码 - medai.sugarclaw.top</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+.card { background: white; border-radius: 14px; padding: 36px 32px; box-shadow: 0 4px 24px rgba(0,0,0,.08); width: 100%; max-width: 400px; }
+h2 { color: #2d3748; font-size: 20px; margin-bottom: 8px; }
+p.sub { color: #718096; font-size: 14px; margin-bottom: 24px; }
+label { display: block; font-size: 13px; font-weight: 600; color: #4a5568; margin-bottom: 6px; }
+input[type=password] { width: 100%; padding: 10px 12px; border: 1.5px solid #e2e8f0; border-radius: 8px; font-size: 14px; outline: none; transition: border-color .15s; }
+input[type=password]:focus { border-color: #667eea; }
+.gap { margin-top: 16px; }
+button { width: 100%; margin-top: 24px; padding: 12px; background: linear-gradient(135deg,#667eea,#764ba2); color: white; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; }
+button:disabled { opacity: .6; cursor: not-allowed; }
+.msg { margin-top: 16px; font-size: 13px; padding: 10px 14px; border-radius: 8px; display: none; }
+.msg.ok  { background: #f0fff4; color: #276749; }
+.msg.err { background: #fff5f5; color: #c53030; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>重置密码</h2>
+  <p class="sub">设置你的新密码（至少 6 位）</p>
+  <div>
+    <label>新密码</label>
+    <input type="password" id="pwd" placeholder="至少 6 位">
+  </div>
+  <div class="gap">
+    <label>确认新密码</label>
+    <input type="password" id="pwd2" placeholder="再输入一次">
+  </div>
+  <button id="btn" onclick="doReset()">确认重置</button>
+  <div class="msg" id="msg"></div>
+</div>
+<script>
+function getToken() {
+  return new URLSearchParams(location.search).get('token') || '';
+}
+async function doReset() {
+  const pwd = document.getElementById('pwd').value;
+  const pwd2 = document.getElementById('pwd2').value;
+  const msg = document.getElementById('msg');
+  const btn = document.getElementById('btn');
+  msg.style.display = 'none';
+  if (!getToken()) { show('err', '链接无效，请重新申请'); return; }
+  if (pwd.length < 6)  { show('err', '密码至少 6 位'); return; }
+  if (pwd !== pwd2)    { show('err', '两次密码不一致'); return; }
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/auth/reset', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({token: getToken(), password: pwd})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      show('ok', '密码已重置，3 秒后跳转登录...');
+      setTimeout(() => location.href = '/', 3000);
+    } else {
+      show('err', d.msg || '重置失败');
+      btn.disabled = false;
+    }
+  } catch(e) { show('err', '网络错误，请重试'); btn.disabled = false; }
+}
+function show(type, text) {
+  const el = document.getElementById('msg');
+  el.className = 'msg ' + type;
+  el.textContent = text;
+  el.style.display = 'block';
+}
+</script>
+</body>
+</html>"""
+
 SURVEY_HTML = """<!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -5610,6 +5739,14 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
 
+        elif path == "/reset":
+            body = RESET_PASSWORD_HTML.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", len(body))
+            self.end_headers()
+            self.wfile.write(body)
+
         elif path == "/survey/results":
             user = _get_session(self)
             ADMIN_EMAILS = ['2471149840@qq.com', 'zhengwenxin79@gmail.com']
@@ -5835,7 +5972,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"logged_in": False})
 
         elif path == "/api/digest":
-            digest = get_digest_data(days=3)
+            digest = get_digest_data(days=7)
             db_stats = stats(DB_PATH)
             self.send_json({"digest": digest, "stats": db_stats})
 
@@ -6195,6 +6332,45 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(body_bytes)
             else:
                 self.send_json(result, 401)
+            return
+
+        elif self.path == "/api/auth/forgot":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            email = body.get("email", "").strip().lower()
+            # 邮箱不存在也返回相同提示，避免账号枚举
+            if email:
+                from db import create_password_reset_token
+                token = create_password_reset_token(email, ttl_minutes=30, db_path=DB_PATH)
+                if token:
+                    try:
+                        from mailer import send_email
+                        host = self.headers.get("Host", "medai.sugarclaw.top")
+                        scheme = "https" if "sugarclaw" in host else "http"
+                        reset_url = f"{scheme}://{host}/reset?token={token}"
+                        html = f"""<div style="font-family:-apple-system,sans-serif;max-width:480px;margin:24px auto;padding:24px;border:1px solid #e2e8f0;border-radius:12px">
+<h2 style="color:#2d3748;margin:0 0 16px">重置 medai.sugarclaw.top 密码</h2>
+<p style="color:#4a5568;line-height:1.6">你（或他人）申请了重置该邮箱账号的密码。点击下面的按钮在 <b>30 分钟内</b>完成重置：</p>
+<p style="margin:24px 0"><a href="{reset_url}" style="display:inline-block;background:#667eea;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600">重置密码</a></p>
+<p style="color:#a0aec0;font-size:13px;line-height:1.6">如果按钮无法点击，请复制以下链接到浏览器：<br><span style="word-break:break-all;color:#718096">{reset_url}</span></p>
+<p style="color:#a0aec0;font-size:12px;margin-top:24px;border-top:1px solid #edf2f7;padding-top:12px">如果不是你本人操作，请忽略此邮件，密码不会变化。</p>
+</div>"""
+                        send_email(email, "重置 medai.sugarclaw.top 密码", html)
+                    except Exception as e:
+                        print(f"[forgot] 发送邮件失败 {email}: {e}")
+            self.send_json({"ok": True, "msg": "如果该邮箱已注册，重置链接已发送，请查收（含垃圾邮件文件夹）"})
+            return
+
+        elif self.path == "/api/auth/reset":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            token = body.get("token", "").strip()
+            new_pwd = body.get("password", "")
+            if len(new_pwd) < 6:
+                self.send_json({"ok": False, "msg": "密码至少 6 位"}, 400); return
+            from db import reset_password_with_token
+            result = reset_password_with_token(token, new_pwd, db_path=DB_PATH)
+            self.send_json(result, 200 if result.get("ok") else 400)
             return
 
         elif self.path == "/api/auth/logout":
