@@ -307,26 +307,54 @@ def expand_research_direction(direction: str, api_key: str = "") -> list:
 
 def score_articles_for_profile(profile_id: int, direction: str,
                                 expanded_keywords: list = None,
-                                api_key: str = "", limit: int = 50,
-                                db_path: str = "corpus/corpus.db") -> int:
-    """为单个研究档案对尚未个性化评分的高质量文章打分，返回已评分篇数。"""
+                                api_key: str = "", limit: int = 200,
+                                db_path: str = "corpus/corpus.db",
+                                days: int = 5) -> int:
+    """为单个研究档案对尚未个性化评分的文章打分，返回已评分篇数。
+
+    策略：用 expanded_keywords 在 title/content 上做 LIKE 预筛（绕过全局评分瓶颈），
+    命中关键词的才送 LLM 精评。无关键词时退化为依赖 quality_score 的旧逻辑作兜底。
+    """
     from db import get_conn, save_user_relevance
 
     key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
     if not key:
         return 0
 
+    keywords = [k.strip() for k in (expanded_keywords or []) if k and k.strip()][:15]
+
     conn = get_conn(db_path)
-    rows = conn.execute("""
-        SELECT a.id, a.title, a.content
-        FROM articles a
-        WHERE a.quality_score >= 5.0
-          AND a.id NOT IN (
-              SELECT article_id FROM user_article_relevance WHERE profile_id=?
-          )
-        ORDER BY a.fetched_at DESC
-        LIMIT ?
-    """, (profile_id, limit)).fetchall()
+    if keywords:
+        kw_clause = " OR ".join(
+            ["(LOWER(a.title) LIKE ? OR LOWER(a.content) LIKE ?)" for _ in keywords]
+        )
+        params = []
+        for kw in keywords:
+            pat = f"%{kw.lower()}%"
+            params.extend([pat, pat])
+        params.extend([profile_id, f"-{days} days", limit])
+        rows = conn.execute(f"""
+            SELECT a.id, a.title, a.content
+            FROM articles a
+            WHERE ({kw_clause})
+              AND a.id NOT IN (
+                  SELECT article_id FROM user_article_relevance WHERE profile_id=?
+              )
+              AND a.fetched_at >= datetime('now', ?)
+            ORDER BY a.fetched_at DESC
+            LIMIT ?
+        """, params).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT a.id, a.title, a.content
+            FROM articles a
+            WHERE a.quality_score >= 5.0
+              AND a.id NOT IN (
+                  SELECT article_id FROM user_article_relevance WHERE profile_id=?
+              )
+            ORDER BY a.fetched_at DESC
+            LIMIT ?
+        """, (profile_id, limit)).fetchall()
     conn.close()
 
     articles = [dict(r) for r in rows]

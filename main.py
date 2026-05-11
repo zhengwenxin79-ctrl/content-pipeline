@@ -108,7 +108,7 @@ def cmd_daily(args):
 
     print("\n[2/4] AI评分筛选...")
     from analyze import score_articles
-    score_articles(limit=30, db_path=args.db)
+    score_articles(limit=1000, db_path=args.db)
 
     print("\n[3/5] 用户个性化评分...")
     from db import migrate_research_directions
