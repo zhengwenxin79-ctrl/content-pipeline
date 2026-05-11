@@ -1895,6 +1895,19 @@ HTML = """<!DOCTYPE html>
       <span>AI 正在生成摘要…</span>
     </div>
     <div class="stats-row" id="statsRow"></div>
+    <!-- 动画解析配额条（登录后显示） -->
+    <div id="quotaBar" style="display:none;align-items:center;justify-content:space-between;gap:12px;
+         background:#faf5ff;border:1px solid #e9d8fd;border-radius:10px;padding:10px 16px;
+         margin-bottom:14px;font-size:13px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px;color:#553c9a">
+        <span style="font-size:16px">🎬</span>
+        <span id="quotaText">加载配额信息...</span>
+      </div>
+      <a id="quotaCta" href="javascript:void(0)" onclick="goToApiKeysSettings()"
+         style="color:#667eea;font-size:12px;text-decoration:none;font-weight:600">
+        填入自己的 key 解锁无限次 →
+      </a>
+    </div>
     <div id="logBox" class="log-box"></div>
     <div id="content"><div class="empty"><div style="font-size:36px">⏳</div><p>请稍等，今日情报正在加载…</p></div></div>
     <div id="recSection" class="rec-section" style="display:none">
@@ -2291,9 +2304,51 @@ HTML = """<!DOCTYPE html>
   </div>
 </div>
 
+<!-- 动画配额超限模态 -->
+<div id="quotaModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:white;border-radius:16px;width:90%;max-width:460px;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,.2);position:relative">
+    <button onclick="closeQuotaModal()" style="position:absolute;top:14px;right:18px;background:none;border:none;font-size:22px;color:#a0aec0;cursor:pointer;line-height:1">×</button>
+    <div style="font-size:42px;text-align:center;margin-bottom:8px">🎬</div>
+    <div style="font-size:18px;font-weight:700;color:#2d3748;text-align:center;margin-bottom:14px">今日免费解析已用完</div>
+    <div style="font-size:13px;color:#4a5568;line-height:1.7;background:#f7fafc;border-radius:10px;padding:14px 16px;margin-bottom:18px">
+      你今天已经解析了 <b>3 篇</b> 论文，免费额度已用尽。<br>
+      想继续使用？两种方式：
+      <div style="margin-top:10px">
+        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px">
+          <span style="color:#a0aec0">①</span>
+          <span><b>明天再来</b>（每天 00:00 自动重置）</span>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:8px">
+          <span style="color:#a0aec0">②</span>
+          <span><b>填入自己的 API key</b>，解锁无限次解析（免费申请，1 分钟搞定）</span>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px">
+      <button onclick="closeQuotaModal()"
+        style="flex:1;background:#f7fafc;color:#4a5568;border:1.5px solid #e2e8f0;padding:10px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">
+        明天再说
+      </button>
+      <button onclick="closeQuotaModal();goToApiKeysSettings()"
+        style="flex:1.4;background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;padding:10px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">
+        ✨ 前往填入 key
+      </button>
+    </div>
+  </div>
+</div>
+
 <script>
 let polling = null;
 let _currentUser = null;
+
+function showQuotaModal() {
+  const m = document.getElementById('quotaModal');
+  if (m) m.style.display = 'flex';
+}
+function closeQuotaModal() {
+  const m = document.getElementById('quotaModal');
+  if (m) m.style.display = 'none';
+}
 
 let _summaryPollTimer = null;
 let _summaryPollCount = 0;
@@ -2707,6 +2762,9 @@ async function initPage() {
   if (me.logged_in) _currentUser = {email: me.email};
   renderAuthArea();
 
+  // 加载动画配额信息（用于顶部配额条和按钮）
+  if (_currentUser) loadApiKeys();
+
   const today = new Date().toISOString().slice(0, 10);
   const lastFetch = data.last_fetch_date || '';
   const badge = document.getElementById('statusBadge');
@@ -3100,6 +3158,7 @@ function renderAnimPanel(articleId, articleUrl, animations) {
 
   const uploadHtml = `
     <div class="anim-upload-area" id="anim-upload-${articleId}">
+      <div id="anim-quota-hint-${articleId}">${renderQuotaHintHtml(window._animQuota)}</div>
       <span class="anim-upload-label">
         ${animations.length ? '➕ 添加更多机制图' : '📤 解析论文机制图'}
       </span>
@@ -3260,11 +3319,8 @@ async function _startAnimTask(articleId, payload) {
     const data = await res.json();
     if (!data.ok) {
       if (data.quota_exceeded) {
-        const goSettings = confirm(data.msg + '\\n\\n点击「确定」前往设置页填入自己的 API key，可解除限制。');
-        if (goSettings) {
-          document.getElementById('settingsBtn')?.click();
-          setTimeout(() => document.getElementById('apiKeysSection')?.scrollIntoView({behavior:'smooth'}), 400);
-        }
+        showQuotaModal();
+        loadApiKeys();  // 刷新顶部配额条到「已用完」状态
       } else {
         if (progressText) progressText.textContent = '启动失败：' + data.msg;
       }
@@ -3301,6 +3357,10 @@ async function _pollAnimTask(articleId, taskId, progressText, progressDiv, uploa
 
     // 完成或出错，刷新动画列表
     if (progressDiv) progressDiv.style.display = 'none';
+
+    // 刷新配额（动画完成意味着可能消耗了一次免费额度）
+    loadApiKeys();
+
     const panel = document.getElementById('anim-panel-' + articleId);
     if (panel) panel.dataset.loaded = '';
 
@@ -4254,7 +4314,11 @@ async function subSaveKeywords() {
 }
 
 // ── BYOK：API Keys 管理 ──────────────────────────────────────
+// 全局缓存配额信息，供其他模块（动画面板等）读取
+window._animQuota = null;
+
 async function loadApiKeys() {
+  if (!_currentUser) return;  // 未登录不请求
   const [keysRes, quotaRes] = await Promise.all([
     fetch('/api/user/api-keys'),
     fetch('/api/user/quota'),
@@ -4262,12 +4326,14 @@ async function loadApiKeys() {
   if (!keysRes.ok || !quotaRes.ok) return;
   const { keys } = await keysRes.json();
   const { animation } = await quotaRes.json();
+  window._animQuota = animation;
 
-  // 更新各 provider 状态
+  // 更新各 provider 状态（仅在设置页存在时）
   ['deepseek', 'dashscope'].forEach(p => {
     const statusEl = document.getElementById(p + 'Status');
     const delBtn   = document.getElementById(p + 'DelBtn');
     const input    = document.getElementById(p + 'KeyInput');
+    if (!statusEl) return;
     if (keys[p]) {
       statusEl.textContent = '✅ ' + keys[p];
       statusEl.style.color = '#38a169';
@@ -4281,7 +4347,7 @@ async function loadApiKeys() {
     }
   });
 
-  // 配额 badge
+  // 设置页内的 badge
   const badge = document.getElementById('quotaBadge');
   if (badge) {
     if (animation.unlimited) {
@@ -4297,6 +4363,78 @@ async function loadApiKeys() {
       badge.style.borderColor = left > 0 ? '#e2e8f0' : '#fed7d7';
     }
   }
+
+  // 文章列表顶部全局配额条（仅登录用户显示）
+  updateQuotaBar(animation);
+
+  // 同步刷新所有动画面板内的提示行
+  document.querySelectorAll('[id^=anim-quota-hint-]').forEach(el => {
+    el.innerHTML = renderQuotaHintHtml(animation);
+  });
+}
+
+function updateQuotaBar(animation) {
+  const bar = document.getElementById('quotaBar');
+  const txt = document.getElementById('quotaText');
+  const cta = document.getElementById('quotaCta');
+  if (!bar || !txt || !cta) return;
+  if (!_currentUser) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  if (animation.unlimited) {
+    txt.innerHTML = '<b>✨ 你已填入自己的 API key</b>，动画解析无次数限制';
+    bar.style.background = '#f0fff4';
+    bar.style.borderColor = '#c6f6d5';
+    txt.style.color = '#276749';
+    cta.style.display = 'none';
+  } else {
+    const left = Math.max(0, animation.limit - animation.used);
+    if (left > 0) {
+      txt.innerHTML = `今日动画解析剩余 <b>${left}/${animation.limit}</b> 次（每天 00:00 重置）`;
+      bar.style.background = '#faf5ff';
+      bar.style.borderColor = '#e9d8fd';
+      txt.style.color = '#553c9a';
+      cta.style.display = '';
+      cta.textContent = '需要更多？填入自己的 key 解锁无限次 →';
+    } else {
+      txt.innerHTML = `<b>今日免费动画次数已用完</b>（${animation.limit}/${animation.limit}）`;
+      bar.style.background = '#fffaf0';
+      bar.style.borderColor = '#feb88f';
+      txt.style.color = '#9c4221';
+      cta.style.display = '';
+      cta.textContent = '前往填入自己的 key 解锁无限次 →';
+    }
+  }
+}
+
+function renderQuotaHintHtml(animation) {
+  if (!animation) return '';
+  if (animation.unlimited) {
+    return `<div style="font-size:11px;color:#38a169;margin-bottom:8px">
+              ✨ 使用自己的 API key · 无次数限制
+            </div>`;
+  }
+  const left = Math.max(0, animation.limit - animation.used);
+  if (left > 0) {
+    return `<div style="font-size:11px;color:#718096;margin-bottom:8px">
+              今日剩余 <b style="color:#6b46c1">${left}/${animation.limit}</b> 次免费解析
+              · <a href="javascript:void(0)" onclick="goToApiKeysSettings()"
+                   style="color:#667eea;text-decoration:none">填入自己的 key 不限次数 →</a>
+            </div>`;
+  }
+  return `<div style="font-size:11px;color:#c05621;margin-bottom:8px">
+            ⚠️ 今日免费次数已用完 ·
+            <a href="javascript:void(0)" onclick="goToApiKeysSettings()"
+               style="color:#667eea;text-decoration:none">填入自己的 key 解锁 →</a>
+          </div>`;
+}
+
+function goToApiKeysSettings() {
+  const btn = document.getElementById('settingsBtn') || document.querySelector('[onclick*="settings"]');
+  if (btn) btn.click();
+  setTimeout(() => {
+    const sec = document.getElementById('apiKeysSection');
+    if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 400);
 }
 
 async function saveApiKey(provider) {
