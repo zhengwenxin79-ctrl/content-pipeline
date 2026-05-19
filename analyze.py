@@ -562,6 +562,139 @@ def score_articles_for_all_users(db_path: str = "corpus/corpus.db"):
     print(f"\n✓ 个性化评分完成，共 {total} 篇")
 
 
+def analyze_trends(db_path: str = "corpus/corpus.db",
+                   recent_days: int = 7,
+                   baseline_days: int = 30,
+                   top_n: int = 15) -> list:
+    """
+    统计近 recent_days 天 vs 之前 (baseline_days - recent_days) 天的关键词频率，
+    计算增长率，返回上升最快的研究热点。纯统计，不消耗 token。
+    """
+    from collections import defaultdict
+    from datetime import datetime, timedelta, timezone
+    from db import get_conn
+
+    _DOMAIN_LABELS = {
+        'NLP', 'AI', 'Computer Vision', 'Machine Learning', 'Robotics',
+        'Neural Networks', 'Image & Video', 'Signal Processing',
+        'Statistics & ML', 'Medical Physics', 'Genomics', 'Neuroscience',
+        'Quantitative Biology', 'Information Retrieval',
+        'Human-Computer Interaction',
+    }
+    _SKIP_WORDS = {
+        'large', 'model', 'models', 'using', 'based', 'towards', 'novel',
+        'efficient', 'study', 'analysis', 'approach', 'method', 'framework',
+        'system', 'network', 'learning', 'deep', 'paper', 'benchmark',
+        'evaluation', 'survey', 'review', 'first', 'multi', 'cross',
+        # 过于宽泛的词
+        'world', 'generation', 'generative', 'representation', 'understanding',
+        'reasoning', 'training', 'language', 'vision', 'visual', 'image',
+        'video', 'audio', 'text', 'tasks', 'data', 'dataset', 'results',
+        'performance', 'knowledge', 'information', 'human', 'automated',
+    }
+
+    def _keywords(article: dict) -> list:
+        tags = []
+        try:
+            tags = json.loads(article.get('domain_tags') or '[]')
+        except Exception:
+            pass
+        domain = tags[0] if tags else ''
+        kws = [t for t in tags[1:]
+               if len(t) >= 5
+               and t.lower() not in _SKIP_WORDS
+               and t not in _DOMAIN_LABELS]
+        return domain, kws
+
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT id, title, domain_tags, quality_score, url, source_name, fetched_at
+        FROM articles
+        WHERE fetched_at >= datetime('now', ?)
+          AND domain_tags != '' AND domain_tags != '[]'
+          AND typeof(quality_score) IN ('real','integer')
+          AND quality_score >= 5.0
+        ORDER BY fetched_at DESC
+    """, (f"-{baseline_days} days",)).fetchall()
+    conn.close()
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=recent_days)
+    baseline_start = now - timedelta(days=baseline_days)
+
+    recent_kw: dict = defaultdict(lambda: {'count': 0, 'score': 0.0, 'articles': []})
+    baseline_kw: dict = defaultdict(int)
+    recent_domain: dict = defaultdict(lambda: {'count': 0, 'articles': []})
+    baseline_domain: dict = defaultdict(int)
+
+    for r in rows:
+        raw = r['fetched_at'] or ''
+        try:
+            t = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+
+        domain, kws = _keywords(dict(r))
+        a = dict(r)
+        score = float(r['quality_score']) if r['quality_score'] else 0.0
+
+        if t >= cutoff:
+            if domain:
+                recent_domain[domain]['count'] += 1
+                if len(recent_domain[domain]['articles']) < 3:
+                    recent_domain[domain]['articles'].append(a)
+            for kw in kws:
+                recent_kw[kw]['count'] += 1
+                recent_kw[kw]['score'] += score
+                if len(recent_kw[kw]['articles']) < 3:
+                    recent_kw[kw]['articles'].append(a)
+        elif t >= baseline_start:
+            if domain:
+                baseline_domain[domain] += 1
+            for kw in kws:
+                baseline_kw[kw] += 1
+
+    baseline_days_actual = baseline_days - recent_days
+    scale = recent_days / max(baseline_days_actual, 1)
+
+    def _trend_score(recent_count, baseline_count, avg_q):
+        baseline_rate = baseline_count * scale
+        growth = (recent_count - baseline_rate) / (baseline_rate + 2)
+        return round(growth * (1 + avg_q / 10), 3)
+
+    results = []
+
+    # 关键词级热点（不单独展示大类 domain，太宽泛）
+    for kw, data in recent_kw.items():
+        cnt = data['count']
+        if cnt < 3:
+            continue
+        avg_q = data['score'] / cnt
+        ts = _trend_score(cnt, baseline_kw.get(kw, 0), avg_q)
+        results.append({
+            'type': 'keyword',
+            'keyword': kw,
+            'count': cnt,
+            'trend_score': ts,
+            'articles': data['articles'],
+        })
+
+    results.sort(key=lambda x: x['trend_score'], reverse=True)
+
+    # 去重：同关键词只保留最高分那条
+    seen = set()
+    deduped = []
+    for r in results:
+        k = r['keyword'].lower()
+        if k not in seen:
+            seen.add(k)
+            deduped.append(r)
+
+    return deduped[:top_n]
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="AI分析模块")

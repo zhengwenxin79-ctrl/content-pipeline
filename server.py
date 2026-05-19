@@ -1924,6 +1924,18 @@ HTML = """<!DOCTYPE html>
       <span>AI 正在生成摘要…</span>
     </div>
     <div class="stats-row" id="statsRow"></div>
+
+    <!-- 热点追踪 -->
+    <div id="trendsSection" style="margin-bottom:20px;display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <span style="font-size:14px;font-weight:700;color:#2d3748">
+          🔥 研究热点追踪
+          <span style="font-size:11px;font-weight:400;color:#a0aec0;margin-left:6px">· 近7天上升最快的方向</span>
+        </span>
+        <button onclick="loadTrends()" style="background:none;border:none;color:#a0aec0;font-size:18px;cursor:pointer" title="刷新">⟳</button>
+      </div>
+      <div id="trendsCards" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+    </div>
     <!-- 动画解析配额条（登录后显示） -->
     <div id="quotaBar" style="display:none;align-items:center;justify-content:space-between;gap:12px;
          background:#faf5ff;border:1px solid #e9d8fd;border-radius:10px;padding:10px 16px;
@@ -2352,6 +2364,14 @@ HTML = """<!DOCTYPE html>
 
 <!-- 登录/注册弹窗 -->
 <!-- Onboarding Modal -->
+<!-- 热点详情弹窗 -->
+<div id="trendModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center" onclick="closeTrendModal(event)">
+  <div style="background:white;border-radius:16px;width:90%;max-width:480px;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,.2);max-height:80vh;overflow-y:auto">
+    <button onclick="document.getElementById('trendModal').style.display='none'" style="float:right;background:none;border:none;font-size:22px;color:#a0aec0;cursor:pointer;line-height:1">×</button>
+    <div id="trendModalContent"></div>
+  </div>
+</div>
+
 <div id="onboardingModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center">
   <div style="background:white;border-radius:16px;width:90%;max-width:480px;padding:32px 28px;box-shadow:0 20px 60px rgba(0,0,0,.2)">
     <div style="font-size:20px;font-weight:700;color:#2d3748;margin-bottom:6px">🎯 设置你的研究方向</div>
@@ -2535,11 +2555,12 @@ async function loadData() {
   document.getElementById('content').innerHTML =
     '<div class="empty"><div style="font-size:36px">⏳</div><p>请稍等，今日情报正在加载…</p></div>';
 
-  // 并行拉取 digest 和话题列表
+  // 并行拉取 digest、话题列表、热点趋势
   const [digestRes, topicsRes] = await Promise.all([
     fetch('/api/digest'),
     fetch('/api/topics'),
   ]);
+  loadTrends(); // 热点异步加载，不阻塞主流程
   const data = await digestRes.json();
   const topicsData = await topicsRes.json();
 
@@ -2652,6 +2673,76 @@ function setFeedFilter(filter) {
     btn.style.borderColor = active ? '#667eea' : '#e2e8f0';
   });
   renderDigest(_digestData);
+}
+
+// ── 热点追踪 ─────────────────────────────────────────────────
+async function loadTrends() {
+  const sec = document.getElementById('trendsSection');
+  const box = document.getElementById('trendsCards');
+  try {
+    const res = await fetch('/api/trends');
+    const data = await res.json();
+    const trends = data.trends || [];
+    if (!trends.length) return;
+    sec.style.display = 'block';
+
+    const colors = ['#e53e3e','#dd6b20','#d69e2e','#38a169','#3182ce','#805ad5'];
+    box.innerHTML = trends.map((t, i) => {
+      const color = colors[Math.min(i, colors.length - 1)];
+      const arrow = t.trend_score > 1 ? '🔥' : t.trend_score > 0 ? '📈' : '➡️';
+      const pct = t.trend_score > 0
+        ? `+${Math.round(t.trend_score * 100)}%`
+        : `${Math.round(t.trend_score * 100)}%`;
+      return `<div onclick="showTrendDetail(${i})"
+        style="display:flex;align-items:center;gap:6px;padding:6px 12px;
+               background:white;border:1.5px solid #e2e8f0;border-radius:20px;
+               cursor:pointer;font-size:13px;transition:all .15s;user-select:none"
+        onmouseover="this.style.borderColor='${color}';this.style.color='${color}'"
+        onmouseout="this.style.borderColor='#e2e8f0';this.style.color=''"
+        data-idx="${i}">
+        <span>${arrow}</span>
+        <span style="font-weight:600">${t.keyword}</span>
+        <span style="font-size:11px;color:#a0aec0">${t.count}篇</span>
+        <span style="font-size:11px;font-weight:700;color:${color}">${pct}</span>
+      </div>`;
+    }).join('');
+
+    window._trendsData = trends;
+  } catch(e) { /* 静默失败 */ }
+}
+
+function showTrendDetail(idx) {
+  const t = (window._trendsData || [])[idx];
+  if (!t) return;
+  const arrow = t.trend_score > 1 ? '🔥' : t.trend_score > 0 ? '📈' : '➡️';
+  const pct = t.trend_score > 0
+    ? `+${Math.round(t.trend_score * 100)}%` : `${Math.round(t.trend_score * 100)}%`;
+  const arts = (t.articles || []).map((a, i) =>
+    `<div style="padding:8px 0;border-bottom:1px solid #f0f0f0">
+       <a href="${a.url || '#'}" target="_blank"
+         style="font-size:13px;color:#2d3748;text-decoration:none;font-weight:500;line-height:1.5">
+         ${i+1}. ${a.title}
+       </a>
+       <div style="font-size:11px;color:#a0aec0;margin-top:2px">${a.source_name || ''}</div>
+     </div>`
+  ).join('') || '<div style="color:#a0aec0;font-size:13px">暂无代表论文</div>';
+
+  const modal = document.getElementById('trendModal');
+  document.getElementById('trendModalContent').innerHTML = `
+    <div style="font-size:18px;font-weight:700;color:#2d3748;margin-bottom:4px">
+      ${arrow} ${t.keyword}
+    </div>
+    <div style="font-size:13px;color:#718096;margin-bottom:16px">
+      近7天 <strong>${t.count}</strong> 篇 · 增长 <strong style="color:#e53e3e">${pct}</strong>
+    </div>
+    <div style="font-size:12px;font-weight:700;color:#a0aec0;letter-spacing:.06em;margin-bottom:8px">代表论文</div>
+    ${arts}`;
+  modal.style.display = 'flex';
+}
+
+function closeTrendModal(e) {
+  if (!e || e.target === document.getElementById('trendModal'))
+    document.getElementById('trendModal').style.display = 'none';
 }
 
 function renderStats(s) {
@@ -6519,6 +6610,22 @@ class Handler(BaseHTTPRequestHandler):
             from db import get_domain_topics
             topics = get_domain_topics(days=7, db_path=DB_PATH)
             self.send_json({"topics": topics})
+
+        elif path == "/api/trends":
+            from analyze import analyze_trends
+            qs = parse_qs(urlparse(self.path).query)
+            recent = int(qs.get("recent", ["7"])[0])
+            baseline = int(qs.get("baseline", ["30"])[0])
+            trends = analyze_trends(DB_PATH, recent_days=recent,
+                                    baseline_days=baseline, top_n=15)
+            # 精简 articles 字段，只传前端需要的
+            for t in trends:
+                t['articles'] = [
+                    {'id': a['id'], 'title': a['title'],
+                     'url': a.get('url', ''), 'source_name': a.get('source_name', '')}
+                    for a in t.get('articles', [])
+                ]
+            self.send_json({"trends": trends})
 
         elif path == "/api/user/domains":
             user = _get_session(self)
