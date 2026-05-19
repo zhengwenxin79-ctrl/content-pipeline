@@ -179,6 +179,7 @@ def init_db(db_path: str = "corpus/corpus.db"):
         "ALTER TABLE articles ADD COLUMN ai_summary TEXT DEFAULT ''",
         "ALTER TABLE articles ADD COLUMN deep_analysis TEXT DEFAULT ''",
         "ALTER TABLE articles ADD COLUMN score_detail TEXT DEFAULT ''",
+        "ALTER TABLE articles ADD COLUMN title_zh TEXT DEFAULT ''",
         "ALTER TABLE articles ADD COLUMN domain_tags TEXT DEFAULT ''",
         "ALTER TABLE users ADD COLUMN subscribed_domains TEXT DEFAULT '[]'",
         "ALTER TABLE users ADD COLUMN reset_token TEXT",

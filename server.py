@@ -1435,7 +1435,8 @@ def get_digest_data(days=2):
     conn = get_conn(DB_PATH)
     rows = conn.execute("""
         SELECT id, title, content, source, source_name, url, category, quality_score,
-               published_at, fetched_at, COALESCE(ai_summary,'') as ai_summary
+               published_at, fetched_at, COALESCE(ai_summary,'') as ai_summary,
+               COALESCE(title_zh,'') as title_zh
         FROM articles
         WHERE fetched_at >= datetime('now', ?)
           AND typeof(quality_score) IN ('real','integer')
@@ -1465,7 +1466,7 @@ def get_digest_data(days=2):
             "url": r["url"] or "",
             "score": float(r["quality_score"]) if isinstance(r["quality_score"], (int, float)) else 0,
             "date": date_display,
-            "title_zh": "",
+            "title_zh": r["title_zh"] or "",
         }
         result[cat].append(article)
         all_articles.append(article)
@@ -1486,12 +1487,20 @@ def get_digest_data(days=2):
         t = threading.Thread(target=generate_ai_summaries_and_cache, args=(all_articles,), daemon=True)
         t.start()
 
-    # 批量翻译英文标题
-    translations = translate_titles(all_articles)
-    for cat_list in result.values():
-        for a in cat_list:
-            if a["id"] in translations:
-                a["title_zh"] = translations[a["id"]]
+    # 翻译英文标题：有缓存直接用，没缓存的后台异步翻译并存 DB
+    need_translate = [a for a in all_articles if not a.get("title_zh")]
+    if need_translate:
+        import threading as _threading
+        def _do_translate(articles_to_translate):
+            new_trans = translate_titles(articles_to_translate)
+            if not new_trans:
+                return
+            _conn = get_conn(DB_PATH)
+            for aid, zh in new_trans.items():
+                _conn.execute("UPDATE articles SET title_zh=? WHERE id=?", (zh, aid))
+            _conn.commit()
+            _conn.close()
+        _threading.Thread(target=_do_translate, args=(need_translate,), daemon=True).start()
 
     # 清理内部字段，不发给前端
     for cat_list in result.values():
