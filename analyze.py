@@ -594,6 +594,7 @@ def analyze_trends(db_path: str = "corpus/corpus.db",
     }
 
     def _keywords(article: dict) -> list:
+        """从 domain_tags 取关键词，没有则从标题提取。"""
         tags = []
         try:
             tags = json.loads(article.get('domain_tags') or '[]')
@@ -604,6 +605,13 @@ def analyze_trends(db_path: str = "corpus/corpus.db",
                if len(t) >= 5
                and t.lower() not in _SKIP_WORDS
                and t not in _DOMAIN_LABELS]
+        # 没有 domain_tags 时从标题提取关键词
+        if not kws:
+            title = article.get('title') or ''
+            words = re.findall(r'[A-Za-z][A-Za-z0-9\-]{3,}', title)
+            kws = [w for w in words
+                   if w.lower() not in _SKIP_WORDS
+                   and w not in _DOMAIN_LABELS][:6]
         return domain, kws
 
     conn = get_conn(db_path)
@@ -611,7 +619,6 @@ def analyze_trends(db_path: str = "corpus/corpus.db",
         SELECT id, title, domain_tags, quality_score, url, source_name, fetched_at
         FROM articles
         WHERE fetched_at >= datetime('now', ?)
-          AND domain_tags != '' AND domain_tags != '[]'
           AND typeof(quality_score) IN ('real','integer')
           AND quality_score >= 5.0
         ORDER BY fetched_at DESC
