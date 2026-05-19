@@ -5,6 +5,7 @@ AI分析模块（使用DeepSeek API）
 """
 
 import os
+import re
 import json
 from openai import OpenAI
 from db import (get_top_posts, get_recent_articles,
@@ -68,12 +69,83 @@ def auto_classify_by_source(db_path: str = "corpus/corpus.db") -> int:
         conn.close()
 
 
-def score_articles(limit: int = 20, db_path: str = "corpus/corpus.db"):
-    """对未打分的外部文章进行质量评分，重点筛选对公众号选题有参考价值的内容"""
+_STOPWORDS = {
+    'a', 'an', 'the', 'for', 'with', 'using', 'via', 'based', 'on', 'in',
+    'of', 'by', 'from', 'to', 'and', 'or', 'is', 'are', 'we', 'our',
+    'this', 'that', 'its', 'as', 'be', 'at', 'it', 'into', 'over',
+    'under', 'new', 'towards', 'toward', 'through', 'between', 'among',
+    'across', 'large', 'deep', 'learning', 'model', 'models', 'method',
+    'approach', 'framework', 'network', 'networks', 'system', 'systems',
+}
+
+_ARXIV_CATEGORY_MAP = {
+    'cs.AI':  'AI',
+    'cs.CV':  'Computer Vision',
+    'cs.LG':  'Machine Learning',
+    'cs.CL':  'NLP',
+    'cs.RO':  'Robotics',
+    'cs.NE':  'Neural Networks',
+    'eess.IV': 'Image & Video',
+    'eess.SP': 'Signal Processing',
+    'q-bio.QM': 'Quantitative Biology',
+    'q-bio.GN': 'Genomics',
+    'q-bio.NC': 'Neuroscience',
+    'stat.ML': 'Statistics & ML',
+    'physics.med-ph': 'Medical Physics',
+}
+
+
+def _build_arxiv_tags(source_name: str, title: str) -> str:
+    """从 source_name 提取 arXiv 分类码，从标题提取关键词，返回 JSON 字符串。"""
+    m = re.search(r'arXiv\s+([a-z\-]+\.[A-Z]+)', source_name)
+    category_code = m.group(1) if m else ''
+    category_label = _ARXIV_CATEGORY_MAP.get(category_code, category_code)
+    words = re.findall(r'[A-Za-z][A-Za-z0-9\-]*', title)
+    keywords = [w for w in words
+                if len(w) >= 4 and w.lower() not in _STOPWORDS][:6]
+    tags = ([category_label] if category_label else []) + keywords
+    return json.dumps(tags, ensure_ascii=False)
+
+
+def tag_and_skip_arxiv(db_path: str = "corpus/corpus.db") -> int:
+    """对积压的 arXiv 文章打领域标签，标记已处理（跳过 LLM 质量评分）。
+    新入库的 arXiv 文章已在 rss.py 中处理，此函数用于一次性清理历史积压。
+    """
     from db import get_conn
     conn = get_conn(db_path)
     rows = conn.execute("""
-        SELECT id, title, content FROM articles
+        SELECT id, source_name, title FROM articles
+        WHERE is_processed = 0 AND source_name LIKE 'arXiv%'
+    """).fetchall()
+
+    if not rows:
+        conn.close()
+        return 0
+
+    for r in rows:
+        domain_tags = _build_arxiv_tags(r['source_name'], r['title'])
+        conn.execute("""
+            UPDATE articles
+            SET is_processed = 1, quality_score = 7.0, domain_tags = ?
+            WHERE id = ?
+        """, (domain_tags, r['id']))
+
+    conn.commit()
+    conn.close()
+    return len(rows)
+
+
+def score_articles(limit: int = 20, db_path: str = "corpus/corpus.db"):
+    """对未打分的文章进行多维度质量评分（arXiv 直接打标签跳过 LLM）"""
+    # 先清理 arXiv 积压，不花 token
+    n_arxiv = tag_and_skip_arxiv(db_path=db_path)
+    if n_arxiv:
+        print(f"✓ arXiv 文章打标签并跳过评分：{n_arxiv} 篇")
+
+    from db import get_conn
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT id, title, content, source_name FROM articles
         WHERE is_processed = 0
         ORDER BY fetched_at DESC
         LIMIT ?
@@ -84,12 +156,13 @@ def score_articles(limit: int = 20, db_path: str = "corpus/corpus.db"):
         print("没有待评分的文章")
     else:
         client = get_client()
-        BATCH = 25
+        BATCH = 20
         all_scored = 0
         for batch_start in range(0, len(rows), BATCH):
             batch = rows[batch_start:batch_start + BATCH]
             articles_text = "\n\n".join([
-                f"ID:{r['id']} 标题:{r['title']}\n内容:{(r['content'] or '').strip()}"
+                f"ID:{r['id']} | 来源:{r['source_name'] or '未知'} | 标题:{r['title']}\n"
+                f"内容:{(r['content'] or '').strip()[:400]}"
                 for r in batch
             ])
             print(f"正在评分第 {batch_start+1}-{batch_start+len(batch)} 篇...")
@@ -104,33 +177,38 @@ def score_articles(limit: int = 20, db_path: str = "corpus/corpus.db"):
 
 
 def _do_score_batch(client, articles_text, rows, db_path):
-    prompt = f"""你是一个内容筛选助手。帮我评估以下文章对"医疗+AI"方向微信公众号内容创作的参考价值。
+    prompt = f"""你是一个学术内容质量评估助手。对以下文章从四个维度打分（每项1-10分）：
 
-核心筛选原则：文章必须同时涉及"医疗/健康/生命科学"AND"人工智能/机器学习/深度学习"，缺一不可。
+1. density（信息密度）：有无具体数据/实验结果/明确结论。泛泛而谈、只有观点无依据 → 低分
+2. novelty（新颖性）：是否原创研究或首次报道。转述已有内容、综述/新闻稿 → 中低分
+3. credibility（来源可信度）：结合"来源"字段判断。顶刊/arXiv/知名机构/知名媒体 → 高分；来源未知/营销号 → 低分
+4. completeness（内容完整度）：摘要是否足以判断内容价值。内容极短（<50字）或缺失 → 低分
 
-评分标准（0-10分）：
-- 8-10分：明确的医疗AI应用案例、临床验证、产品落地或行业洞察，信息具体
-- 5-7分：有医疗AI相关性，但需要较多加工
-- 0-3分：以下任一情况直接给0-3分：
-  * 纯医学研究（无AI成分，如药物试验、纯临床研究）
-  * 纯AI研究（无医疗场景，如通用LLM、推荐系统）
-  * 政治/政策/非技术内容
-  * 信息量太低
+overall 按以下权重计算（自行计算，保留一位小数）：
+  overall = density×0.35 + novelty×0.30 + credibility×0.25 + completeness×0.10
 
-请对每篇文章打分，只输出JSON，格式：
-{{"scores": [{{"id": 1, "score": 7.5, "reason": "简短理由"}}, ...]}}
+只输出JSON，不要其他任何文字：
+{{"scores": [
+  {{"id": 1, "scores": {{"density": 8, "novelty": 7, "credibility": 9, "completeness": 6}}, "overall": 7.6, "reason": "理由（15字以内）"}},
+  ...
+]}}
 
-文章列表：
+文章列表（格式：ID | 来源 | 标题 / 内容摘要）：
 {articles_text}"""
 
     try:
-        text = chat(client, prompt, max_tokens=2000)
-        # DeepSeek有时在JSON外包一层markdown代码块，去掉
+        text = chat(client, prompt, max_tokens=2500)
         text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         result = json.loads(text)
         for item in result["scores"]:
-            update_quality_score(item["id"], item["score"], db_path=db_path)
-            print(f"  文章{item['id']}: {item['score']}分 - {item['reason']}")
+            detail = json.dumps(item.get("scores", {}), ensure_ascii=False)
+            overall = float(item.get("overall", 0))
+            update_quality_score(item["id"], overall, score_detail=detail, db_path=db_path)
+            dim = item.get("scores", {})
+            print(f"  [{item['id']}] {overall:.1f}分 "
+                  f"(密度{dim.get('density','?')} 新颖{dim.get('novelty','?')} "
+                  f"可信{dim.get('credibility','?')} 完整{dim.get('completeness','?')}) "
+                  f"- {item.get('reason','')}")
         print(f"\n✓ 已完成 {len(result['scores'])} 篇评分")
     except Exception as e:
         print(f"解析评分结果失败: {e}")

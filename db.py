@@ -178,6 +178,9 @@ def init_db(db_path: str = "corpus/corpus.db"):
         "ALTER TABLE subscriptions ADD COLUMN research_direction TEXT DEFAULT ''",
         "ALTER TABLE articles ADD COLUMN ai_summary TEXT DEFAULT ''",
         "ALTER TABLE articles ADD COLUMN deep_analysis TEXT DEFAULT ''",
+        "ALTER TABLE articles ADD COLUMN score_detail TEXT DEFAULT ''",
+        "ALTER TABLE articles ADD COLUMN domain_tags TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN subscribed_domains TEXT DEFAULT '[]'",
         "ALTER TABLE users ADD COLUMN reset_token TEXT",
         "ALTER TABLE users ADD COLUMN reset_token_expires TEXT",
         """CREATE TABLE IF NOT EXISTS app_state (
@@ -252,6 +255,9 @@ def init_db(db_path: str = "corpus/corpus.db"):
 def add_article(source: str, title: str, content: str = None,
                 url: str = None, source_name: str = None,
                 published_at: str = None, tags: list = None,
+                domain_tags: str = '',
+                quality_score: float = 0.0,
+                is_processed: int = 0,
                 db_path: str = "corpus/corpus.db"):
     """添加外部文章，URL或标题重复则跳过"""
     conn = get_conn(db_path)
@@ -273,10 +279,12 @@ def add_article(source: str, title: str, content: str = None,
                 return None
         cursor = conn.execute("""
             INSERT OR IGNORE INTO articles
-                (source, source_name, title, content, url, published_at, tags)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (source, source_name, title, content, url,
-              published_at, json.dumps(tags or [], ensure_ascii=False)))
+                (source, source_name, title, content, url, published_at,
+                 tags, domain_tags, quality_score, is_processed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (source, source_name, title, content, url, published_at,
+              json.dumps(tags or [], ensure_ascii=False),
+              domain_tags, quality_score, is_processed))
         conn.commit()
         if cursor.rowcount == 0:
             return None
@@ -343,11 +351,14 @@ def get_recent_articles(days: int = 7, min_quality: float = 0.0,
 
 
 def update_quality_score(article_id: int, score: float,
+                         score_detail: str = "",
                          db_path: str = "corpus/corpus.db"):
     conn = get_conn(db_path)
     try:
-        conn.execute("UPDATE articles SET quality_score=?, is_processed=1 WHERE id=?",
-                     (score, article_id))
+        conn.execute(
+            "UPDATE articles SET quality_score=?, score_detail=?, is_processed=1 WHERE id=?",
+            (score, score_detail, article_id)
+        )
         conn.commit()
     finally:
         conn.close()
@@ -1078,6 +1089,58 @@ def get_user_preferences(user_id: int, db_path: str = "corpus/corpus.db") -> dic
         }
     finally:
         conn.close()
+
+
+def get_subscribed_domains(email: str, db_path: str = "corpus/corpus.db") -> list:
+    """返回用户订阅的领域列表"""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT subscribed_domains FROM users WHERE email = ?", (email,)
+        ).fetchone()
+        if not row or not row["subscribed_domains"]:
+            return []
+        return json.loads(row["subscribed_domains"])
+    finally:
+        conn.close()
+
+
+def update_subscribed_domains(email: str, domains: list,
+                              db_path: str = "corpus/corpus.db"):
+    """更新用户订阅的领域列表"""
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "UPDATE users SET subscribed_domains = ? WHERE email = ?",
+            (json.dumps(domains, ensure_ascii=False), email)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_domain_topics(days: int = 7, db_path: str = "corpus/corpus.db") -> list:
+    """返回近N天高质量文章中各领域的文章数，按数量倒序（取 domain_tags 第一项为领域名）"""
+    from collections import Counter
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("""
+            SELECT domain_tags FROM articles
+            WHERE fetched_at >= datetime('now', ?)
+              AND domain_tags != '' AND domain_tags != '[]'
+              AND quality_score >= 6.0
+        """, (f"-{days} days",)).fetchall()
+    finally:
+        conn.close()
+    counter = Counter()
+    for r in rows:
+        try:
+            tags = json.loads(r["domain_tags"])
+            if tags:
+                counter[tags[0]] += 1
+        except Exception:
+            pass
+    return [{"name": n, "count": c} for n, c in counter.most_common(20)]
 
 
 def save_user_preferences(user_id: int, prefs: dict, db_path: str = "corpus/corpus.db"):

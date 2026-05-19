@@ -7,6 +7,8 @@ RSS抓取模块
 
 import feedparser
 import yaml
+import json
+import re
 from datetime import datetime
 from pathlib import Path
 import sys
@@ -14,6 +16,51 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from db import add_article
+
+# 提取 arXiv 标题关键词时过滤掉的停用词
+_STOPWORDS = {
+    'a', 'an', 'the', 'for', 'with', 'using', 'via', 'based', 'on', 'in',
+    'of', 'by', 'from', 'to', 'and', 'or', 'is', 'are', 'we', 'our',
+    'this', 'that', 'its', 'as', 'be', 'at', 'it', 'into', 'over',
+    'under', 'new', 'towards', 'toward', 'through', 'between', 'among',
+    'across', 'large', 'deep', 'learning', 'model', 'models', 'method',
+    'approach', 'framework', 'network', 'networks', 'system', 'systems',
+}
+
+# arXiv 分类 → 可读领域名
+_ARXIV_CATEGORY_MAP = {
+    'cs.AI':  'AI',
+    'cs.CV':  'Computer Vision',
+    'cs.LG':  'Machine Learning',
+    'cs.CL':  'NLP',
+    'cs.RO':  'Robotics',
+    'cs.NE':  'Neural Networks',
+    'cs.IR':  'Information Retrieval',
+    'cs.HC':  'Human-Computer Interaction',
+    'eess.IV': 'Image & Video',
+    'eess.SP': 'Signal Processing',
+    'q-bio.QM': 'Quantitative Biology',
+    'q-bio.GN': 'Genomics',
+    'q-bio.NC': 'Neuroscience',
+    'stat.ML': 'Statistics & ML',
+    'physics.med-ph': 'Medical Physics',
+}
+
+
+def _build_arxiv_tags(source_name: str, title: str) -> str:
+    """从 source_name 提取 arXiv 分类，从标题提取关键词，返回 JSON 字符串。"""
+    # 从 source_name 中提取形如 "cs.AI" 的分类码
+    m = re.search(r'arXiv\s+([a-z\-]+\.[A-Z]+)', source_name)
+    category_code = m.group(1) if m else ''
+    category_label = _ARXIV_CATEGORY_MAP.get(category_code, category_code)
+
+    # 从标题提取有意义的词（字母开头，长度>=4，不在停用词表）
+    words = re.findall(r'[A-Za-z][A-Za-z0-9\-]*', title)
+    keywords = [w for w in words
+                if len(w) >= 4 and w.lower() not in _STOPWORDS][:6]
+
+    tags = ([category_label] if category_label else []) + keywords
+    return json.dumps(tags, ensure_ascii=False)
 
 
 DEFAULT_SOURCES = [
@@ -78,6 +125,7 @@ def fetch_rss(source: dict, db_path: str = "corpus/corpus.db") -> int:
         if not title:
             continue
 
+        is_arxiv = source["name"].startswith("arXiv")
         article_id = add_article(
             source=source.get("source_type", "rss"),
             title=title,
@@ -86,6 +134,9 @@ def fetch_rss(source: dict, db_path: str = "corpus/corpus.db") -> int:
             source_name=source["name"],
             published_at=published,
             tags=source.get("tags", []),
+            domain_tags=_build_arxiv_tags(source["name"], title) if is_arxiv else '',
+            quality_score=7.0 if is_arxiv else 0.0,
+            is_processed=1 if is_arxiv else 0,
             db_path=db_path
         )
         if article_id:
