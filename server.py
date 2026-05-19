@@ -1971,7 +1971,7 @@ HTML = """<!DOCTYPE html>
     </div>
 
     <!-- Feed 过滤标签 -->
-    <div id="feedFilterTabs" style="display:none;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap">
+    <div id="feedFilterTabs" style="display:none;margin-bottom:12px;gap:8px;flex-wrap:wrap">
       <button id="feedTabAll" onclick="setFeedFilter('all')"
         style="padding:5px 14px;border-radius:20px;border:1.5px solid #667eea;
                background:#667eea;color:white;font-size:12px;font-weight:600;cursor:pointer">
