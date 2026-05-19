@@ -2766,7 +2766,7 @@ function renderDigest(digest) {
   }
   if (!hasAny) {
     const filterMsg = _feedFilter !== 'all' || _activeTopic
-      ? '当前过滤条件下没有文章，<a href="javascript:setFeedFilter(\'all\')" style="color:#667eea">查看全部</a>'
+      ? `当前过滤条件下没有文章，<a href="javascript:setFeedFilter('all')" style="color:#667eea">查看全部</a>`
       : `今日情报暂未更新，每天 07:00 自动推送${_currentUser?.is_admin ? '，或点击「一键更新情报」立即抓取' : '，请稍后再来'}`;
     html = `<div class="empty"><div style="font-size:48px">📭</div><p>${filterMsg}</p></div>`;
   }
