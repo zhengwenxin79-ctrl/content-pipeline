@@ -1438,6 +1438,7 @@ def get_digest_data(days=2):
                published_at, fetched_at, COALESCE(ai_summary,'') as ai_summary
         FROM articles
         WHERE fetched_at >= datetime('now', ?)
+          AND typeof(quality_score) IN ('real','integer')
           AND quality_score >= 5.5
           AND category != ''
         ORDER BY quality_score DESC
@@ -1462,7 +1463,7 @@ def get_digest_data(days=2):
             "source": r["source_name"],
             "source_type": r["source"],
             "url": r["url"] or "",
-            "score": r["quality_score"] or 0,
+            "score": float(r["quality_score"]) if isinstance(r["quality_score"], (int, float)) else 0,
             "date": date_display,
             "title_zh": "",
         }
@@ -2729,7 +2730,7 @@ function renderDigest(digest) {
             ${zhLine}
             <div class="article-meta" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
               <span class="score-dot" style="background:${scoreColor(a.score)}"></span>
-              ${(a.score||0).toFixed(1)}分 · ${a.source}${datePart}
+              ${(parseFloat(a.score)||0).toFixed(1)}分 · ${a.source}${datePart}
               ${domainBadge}
             </div>
             <div class="article-summary" id="summary-${a.id}" style="${a.summary ? '' : 'display:none'}">${a.summary || ''}</div>
