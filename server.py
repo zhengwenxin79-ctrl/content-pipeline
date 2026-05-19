@@ -1462,7 +1462,7 @@ def get_digest_data(days=2):
             "source": r["source_name"],
             "source_type": r["source"],
             "url": r["url"] or "",
-            "score": r["quality_score"],
+            "score": r["quality_score"] or 0,
             "date": date_display,
             "title_zh": "",
         }
@@ -1928,6 +1928,57 @@ HTML = """<!DOCTYPE html>
       </a>
     </div>
     <div id="logBox" class="log-box"></div>
+
+    <!-- 无研究方向引导 banner -->
+    <div id="noProfileBanner" style="display:none;align-items:center;justify-content:space-between;
+         gap:12px;background:#faf5ff;border:1px solid #d6bcfa;border-radius:10px;
+         padding:12px 16px;margin-bottom:14px;font-size:13px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px;color:#553c9a">
+        <span style="font-size:16px">🎯</span>
+        <span>描述你的研究方向，让情报更精准</span>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button onclick="showOnboardingModal()"
+          style="background:#667eea;color:white;border:none;padding:6px 14px;
+                 border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">
+          立即设置
+        </button>
+        <button onclick="dismissNoProfileBanner()"
+          style="background:none;border:none;color:#a0aec0;font-size:18px;cursor:pointer;padding:0 4px">×</button>
+      </div>
+    </div>
+
+    <!-- 话题卡片区 -->
+    <div id="topicCardsSection" style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span style="font-size:13px;font-weight:600;color:#4a5568">
+          🗂 探索领域
+          <span style="font-size:11px;color:#a0aec0;font-weight:400">· 点击卡片筛选文章，再次点击取消</span>
+        </span>
+        <span id="feedFilterLabel" style="font-size:12px;color:#667eea;display:none"></span>
+      </div>
+      <div id="topicCards" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+    </div>
+
+    <!-- Feed 过滤标签 -->
+    <div id="feedFilterTabs" style="display:none;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap">
+      <button id="feedTabAll" onclick="setFeedFilter('all')"
+        style="padding:5px 14px;border-radius:20px;border:1.5px solid #667eea;
+               background:#667eea;color:white;font-size:12px;font-weight:600;cursor:pointer">
+        全部
+      </button>
+      <button id="feedTabDir" onclick="setFeedFilter('direction')"
+        style="padding:5px 14px;border-radius:20px;border:1.5px solid #e2e8f0;
+               background:white;color:#718096;font-size:12px;font-weight:600;cursor:pointer">
+        🎯 研究方向
+      </button>
+      <button id="feedTabTopic" onclick="setFeedFilter('topic')"
+        style="padding:5px 14px;border-radius:20px;border:1.5px solid #e2e8f0;
+               background:white;color:#718096;font-size:12px;font-weight:600;cursor:pointer">
+        🗂 话题订阅
+      </button>
+    </div>
+
     <div id="content"><div class="empty"><div style="font-size:36px">⏳</div><p>请稍等，今日情报正在加载…</p></div></div>
     <div id="recSection" class="rec-section" style="display:none">
       <div class="rec-section-title">✍️ 今日写作推荐</div>
@@ -2290,6 +2341,36 @@ HTML = """<!DOCTYPE html>
 </div>
 
 <!-- 登录/注册弹窗 -->
+<!-- Onboarding Modal -->
+<div id="onboardingModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center">
+  <div style="background:white;border-radius:16px;width:90%;max-width:480px;padding:32px 28px;box-shadow:0 20px 60px rgba(0,0,0,.2)">
+    <div style="font-size:20px;font-weight:700;color:#2d3748;margin-bottom:6px">🎯 设置你的研究方向</div>
+    <div style="font-size:13px;color:#718096;margin-bottom:20px">
+      用自然语言描述，系统自动匹配相关文献和情报<br>
+      <span style="color:#a0aec0">例如：蛋白质结构预测、临床NLP大模型、手术机器人控制算法</span>
+    </div>
+    <textarea id="onboardingDirection"
+      placeholder="描述你的研究方向..."
+      style="width:100%;height:90px;padding:12px;border:1.5px solid #e2e8f0;border-radius:8px;
+             font-size:14px;resize:none;box-sizing:border-box;outline:none;
+             font-family:inherit;color:#2d3748;line-height:1.5"></textarea>
+    <div id="onboardingMsg" style="font-size:12px;color:#e53e3e;margin-top:6px;display:none"></div>
+    <div style="display:flex;gap:10px;margin-top:16px">
+      <button onclick="skipOnboarding()"
+        style="flex:1;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;
+               background:white;color:#718096;font-size:14px;cursor:pointer">
+        跳过
+      </button>
+      <button onclick="submitOnboarding()"
+        style="flex:2;padding:10px;border:none;border-radius:8px;
+               background:linear-gradient(135deg,#667eea,#764ba2);
+               color:white;font-size:14px;font-weight:600;cursor:pointer">
+        开始个性化推荐
+      </button>
+    </div>
+  </div>
+</div>
+
 <div id="authModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center">
   <div style="background:white;border-radius:16px;width:90%;max-width:400px;padding:32px 28px;box-shadow:0 20px 60px rgba(0,0,0,.2);position:relative">
     <button onclick="closeAuthModal()" style="position:absolute;top:16px;right:20px;background:none;border:none;font-size:22px;color:#a0aec0;cursor:pointer;line-height:1">×</button>
@@ -2433,16 +2514,44 @@ async function _pollSummaries() {
   }
 }
 
+// ── 个性化状态 ────────────────────────────────────────────
+let _digestData = null;          // 最新 digest 响应
+let _subscribedDomains = [];     // 用户已订阅的领域
+let _activeTopic = null;         // 当前点击的话题卡片
+let _feedFilter = 'all';         // 'all' | 'direction' | 'topic'
+
 async function loadData() {
   try {
   document.getElementById('content').innerHTML =
     '<div class="empty"><div style="font-size:36px">⏳</div><p>请稍等，今日情报正在加载…</p></div>';
-  const res = await fetch('/api/digest');
-  const data = await res.json();
-  renderStats(data.stats);
-  renderDigest(data.digest);
 
-  // 如果有文章正在后台生成 AI 摘要，静默轮询并原地更新摘要文字
+  // 并行拉取 digest 和话题列表
+  const [digestRes, topicsRes] = await Promise.all([
+    fetch('/api/digest'),
+    fetch('/api/topics'),
+  ]);
+  const data = await digestRes.json();
+  const topicsData = await topicsRes.json();
+
+  _digestData = data.digest;
+  _subscribedDomains = data.digest._subscribed_domains || [];
+
+  renderStats(data.stats);
+  renderTopicCards(topicsData.topics || [], _subscribedDomains);
+  renderDigest(_digestData);
+
+  // 有研究方向时显示 Feed 过滤标签
+  if (data.digest._has_profiles || _subscribedDomains.length > 0) {
+    document.getElementById('feedFilterTabs').style.display = 'flex';
+  }
+
+  // 无研究方向且未关闭过 banner 时显示引导
+  if (!data.digest._has_profiles && _currentUser &&
+      !localStorage.getItem('noProfileBannerDismissed')) {
+    document.getElementById('noProfileBanner').style.display = 'flex';
+  }
+
+  // 摘要生成 banner
   const banner = document.getElementById('summaryGeneratingBanner');
   if (data.digest && data.digest._generating_summaries) {
     const count = data.digest._need_summary_count || 0;
@@ -2464,6 +2573,77 @@ async function loadData() {
   }
 }
 
+// ── 话题卡片 ──────────────────────────────────────────────
+function renderTopicCards(topics, subscribed) {
+  const container = document.getElementById('topicCards');
+  if (!topics.length) { container.innerHTML = ''; return; }
+  container.innerHTML = topics.map(t => {
+    const isSub = subscribed.includes(t.name);
+    const isActive = _activeTopic === t.name;
+    return `<button
+      id="topic-btn-${encodeURIComponent(t.name)}"
+      onclick="clickTopicCard('${escHtml(t.name)}')"
+      style="padding:5px 12px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;
+             border:1.5px solid ${isActive ? '#667eea' : isSub ? '#805ad5' : '#e2e8f0'};
+             background:${isActive ? '#667eea' : isSub ? '#faf5ff' : 'white'};
+             color:${isActive ? 'white' : isSub ? '#553c9a' : '#4a5568'};
+             transition:all .15s">
+      ${isSub ? '✓ ' : ''}${escHtml(t.name)}
+      <span style="opacity:.65;font-weight:400">·${t.count}</span>
+    </button>`;
+  }).join('');
+}
+
+async function clickTopicCard(name) {
+  // 切换：点同一个取消，点不同的切换
+  _activeTopic = (_activeTopic === name) ? null : name;
+  _feedFilter = _activeTopic ? 'topic-click' : 'all';
+  renderDigest(_digestData);
+  // 更新卡片样式
+  renderTopicCards(
+    Array.from(document.querySelectorAll('#topicCards button')).map(b => ({
+      name: b.textContent.replace(/^✓\s*/, '').replace(/·\d+$/, '').trim(),
+      count: parseInt(b.querySelector('span')?.textContent?.replace('·','') || '0')
+    })),
+    _subscribedDomains
+  );
+  // 长按（右键）订阅/取消订阅
+}
+
+async function toggleDomainSubscription(name) {
+  if (!_currentUser) { openAuthModal('login'); return; }
+  const idx = _subscribedDomains.indexOf(name);
+  if (idx >= 0) _subscribedDomains.splice(idx, 1);
+  else _subscribedDomains.push(name);
+  await fetch('/api/user/domains', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({domains: _subscribedDomains})
+  });
+  renderTopicCards(
+    (await (await fetch('/api/topics')).json()).topics || [],
+    _subscribedDomains
+  );
+  if (_digestData) {
+    document.getElementById('feedFilterTabs').style.display =
+      (_digestData._has_profiles || _subscribedDomains.length > 0) ? 'flex' : 'none';
+  }
+}
+
+// ── Feed 过滤 ─────────────────────────────────────────────
+function setFeedFilter(filter) {
+  _feedFilter = filter;
+  _activeTopic = null;
+  ['all','direction','topic'].forEach(f => {
+    const btn = document.getElementById('feedTab' + f.charAt(0).toUpperCase() + f.slice(1));
+    if (!btn) return;
+    const active = f === filter;
+    btn.style.background = active ? '#667eea' : 'white';
+    btn.style.color = active ? 'white' : '#718096';
+    btn.style.borderColor = active ? '#667eea' : '#e2e8f0';
+  });
+  renderDigest(_digestData);
+}
+
 function renderStats(s) {
   document.getElementById('statsRow').innerHTML = `
     <div class="stat-card"><div class="num">${s.today || 0}</div><div class="label">今日新增</div></div>
@@ -2478,7 +2658,20 @@ function scoreColor(s) {
   return '#a0aec0';
 }
 
+function _articleMatchesFilter(a) {
+  if (_feedFilter === 'direction') return (a.relevance_score || 0) >= 6;
+  if (_feedFilter === 'topic') {
+    const tags = a.domain_tags || [];
+    return _subscribedDomains.some(d => tags.includes(d));
+  }
+  if (_feedFilter === 'topic-click' && _activeTopic) {
+    return (a.domain_tags || []).includes(_activeTopic);
+  }
+  return true;
+}
+
 function renderDigest(digest) {
+  if (!digest) return;
   const sections = [
     { key: '顶刊论文', icon: '📄', cls: 'journal' },
     { key: '大组动态', icon: '🏛', cls: 'lab' },
@@ -2487,8 +2680,11 @@ function renderDigest(digest) {
   ];
   let html = '';
   let hasAny = false;
+
   for (const sec of sections) {
-    const items = digest[sec.key] || [];
+    let items = (digest[sec.key] || []).filter(_articleMatchesFilter);
+    // 有相关性分的文章置顶，其次按质量分
+    items.sort((a, b) => (b.relevance_score||0) - (a.relevance_score||0) || b.score - a.score);
     if (!items.length) continue;
     hasAny = true;
     html += `<div class="section">
@@ -2501,24 +2697,46 @@ function renderDigest(digest) {
       const link = a.url ? `<a href="${a.url}" target="_blank">${a.title}</a>` : a.title;
       const zhLine = a.title_zh ? `<div class="article-title-zh">🔤 ${a.title_zh}</div>` : '';
       const datePart = a.date ? ` · ${a.date}` : '';
+      // 相关性徽章
+      const relBadge = (a.relevance_score >= 6)
+        ? `<span title="${escHtml(a.relevance_reason||'')}"
+             style="font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;
+                    background:#e9d8fd;color:#553c9a;white-space:nowrap;cursor:default">
+             🎯 ${a.relevance_score.toFixed(1)}
+           </span>` : '';
+      // 话题标签（第一个 domain_tag）
+      const domainTag = (a.domain_tags||[])[0];
+      const domainBadge = domainTag
+        ? `<span onclick="clickTopicCard('${escHtml(domainTag)}')"
+             style="font-size:11px;padding:2px 8px;border-radius:10px;
+                    background:#ebf8ff;color:#2b6cb0;cursor:pointer;white-space:nowrap">
+             ${escHtml(domainTag)}
+           </span>` : '';
       html += `<div class="article-card ${sec.cls}" id="acard-${a.id}">
         <div class="article-select-wrap">
           <input type="checkbox" id="chk-${a.id}" value="${a.id}" onchange="onArticleCheck(${a.id}, this.checked)">
           <div class="article-card-body">
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
               <div class="article-title" style="flex:1">${link}</div>
-              <button class="star-btn" id="star-${a.id}" onclick="toggleStar(${a.id})" title="收藏" style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;opacity:0.4" onmouseover="this.style.opacity=1" onmouseout="if(!this.dataset.starred)this.style.opacity=0.4">☆</button>
+              <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+                ${relBadge}
+                <button class="star-btn" id="star-${a.id}" onclick="toggleStar(${a.id})" title="收藏"
+                  style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;opacity:0.4"
+                  onmouseover="this.style.opacity=1"
+                  onmouseout="if(!this.dataset.starred)this.style.opacity=0.4">☆</button>
+              </div>
             </div>
             ${zhLine}
-            <div class="article-meta">
+            <div class="article-meta" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
               <span class="score-dot" style="background:${scoreColor(a.score)}"></span>
-              ${a.score.toFixed(1)}分 · ${a.source}${datePart}
+              ${(a.score||0).toFixed(1)}分 · ${a.source}${datePart}
+              ${domainBadge}
             </div>
             <div class="article-summary" id="summary-${a.id}" style="${a.summary ? '' : 'display:none'}">${a.summary || ''}</div>
             <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <button onclick="toggleDeepAnalysis(${a.id})"
-                id="btn-analyze-${a.id}"
-                style="font-size:12px;color:#667eea;background:#f0f4ff;border:1px solid #c3dafe;padding:4px 12px;border-radius:12px;cursor:pointer;font-weight:500">
+              <button onclick="toggleDeepAnalysis(${a.id})" id="btn-analyze-${a.id}"
+                style="font-size:12px;color:#667eea;background:#f0f4ff;border:1px solid #c3dafe;
+                       padding:4px 12px;border-radius:12px;cursor:pointer;font-weight:500">
                 🔬 深度分析
               </button>
               <button class="anim-btn" id="anim-btn-${a.id}"
@@ -2537,13 +2755,59 @@ function renderDigest(digest) {
     html += `</div></div>`;
   }
   if (!hasAny) {
-    const isAdmin = _currentUser && _currentUser.is_admin;
-    html = `<div class="empty">
-      <div style="font-size:48px">📭</div>
-      <p>今日情报暂未更新，每天 07:00 自动推送${isAdmin ? '，或点击「一键更新情报」立即抓取' : '，请稍后再来'}</p>
-    </div>`;
+    const filterMsg = _feedFilter !== 'all' || _activeTopic
+      ? '当前过滤条件下没有文章，<a href="javascript:setFeedFilter(\'all\')" style="color:#667eea">查看全部</a>'
+      : `今日情报暂未更新，每天 07:00 自动推送${_currentUser?.is_admin ? '，或点击「一键更新情报」立即抓取' : '，请稍后再来'}`;
+    html = `<div class="empty"><div style="font-size:48px">📭</div><p>${filterMsg}</p></div>`;
   }
   document.getElementById('content').innerHTML = html;
+}
+
+// ── Onboarding & Banner ───────────────────────────────────
+function showOnboardingModal() {
+  document.getElementById('noProfileBanner').style.display = 'none';
+  document.getElementById('onboardingModal').style.display = 'flex';
+  document.getElementById('onboardingDirection').focus();
+}
+
+function skipOnboarding() {
+  document.getElementById('onboardingModal').style.display = 'none';
+  localStorage.setItem('noProfileBannerDismissed', '1');
+}
+
+async function submitOnboarding() {
+  const direction = document.getElementById('onboardingDirection').value.trim();
+  const msg = document.getElementById('onboardingMsg');
+  if (!direction) { msg.textContent = '请填写研究方向'; msg.style.display='block'; return; }
+  msg.style.display = 'none';
+  const btn = document.querySelector('#onboardingModal button:last-child');
+  btn.textContent = '正在设置...'; btn.disabled = true;
+  try {
+    const res = await fetch('/api/research-profiles', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name: '我的研究方向', direction})
+    });
+    const data = await res.json();
+    if (data.ok) {
+      document.getElementById('onboardingModal').style.display = 'none';
+      localStorage.setItem('noProfileBannerDismissed', '1');
+      // 重新加载 feed，后台已触发打分
+      await loadData();
+    } else {
+      msg.textContent = data.msg || '设置失败，请重试';
+      msg.style.display = 'block';
+    }
+  } catch(e) {
+    msg.textContent = '网络错误，请重试';
+    msg.style.display = 'block';
+  } finally {
+    btn.textContent = '开始个性化推荐'; btn.disabled = false;
+  }
+}
+
+function dismissNoProfileBanner() {
+  document.getElementById('noProfileBanner').style.display = 'none';
+  localStorage.setItem('noProfileBannerDismissed', '1');
 }
 
 async function runPipeline() {
@@ -2723,6 +2987,7 @@ async function doAuth() {
     });
     const data = await res.json();
     if (data.ok) {
+      const isRegister = _authMode === 'register';
       _currentUser = {email: data.email};
       renderAuthArea();
       closeAuthModal();
@@ -2737,6 +3002,10 @@ async function doAuth() {
           if (tab === 'subscribe') initSubscribePage();
           if (tab === 'myfeeds') initMyFeeds();
         }
+      }
+      // 注册成功后弹 onboarding（登录不触发）
+      if (isRegister) {
+        setTimeout(() => showOnboardingModal(), 300);
       }
     } else {
       showAuthMsg(data.msg || '操作失败', 'error');
@@ -5974,6 +6243,49 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/digest":
             digest = get_digest_data(days=7)
             db_stats = stats(DB_PATH)
+
+            # 附加个性化数据（登录用户）
+            user = _get_session(self)
+            if user:
+                from db import (get_research_profiles, get_user_relevance_batch,
+                                get_subscribed_domains, get_conn as _gc)
+                profiles = get_research_profiles(user["email"], DB_PATH)
+                subscribed = get_subscribed_domains(user["email"], DB_PATH)
+
+                # 收集本次 digest 所有文章 id 及 domain_tags
+                all_articles = []
+                for v in digest.values():
+                    if isinstance(v, list):
+                        all_articles.extend(v)
+                all_ids = [a["id"] for a in all_articles]
+
+                # 附加 domain_tags（从 DB 读，get_digest_data 未带此字段）
+                if all_ids:
+                    _conn = _gc(DB_PATH)
+                    ph = ",".join("?" * len(all_ids))
+                    dtags = {r["id"]: r["domain_tags"] for r in _conn.execute(
+                        f"SELECT id, domain_tags FROM articles WHERE id IN ({ph})",
+                        all_ids).fetchall()}
+                    _conn.close()
+                    for a in all_articles:
+                        try:
+                            a["domain_tags"] = json.loads(dtags.get(a["id"]) or "[]")
+                        except Exception:
+                            a["domain_tags"] = []
+
+                # 附加相关性分（多 profile 取最高分）
+                if profiles and all_ids:
+                    pids = [p["id"] for p in profiles]
+                    rel = get_user_relevance_batch(pids, all_ids, DB_PATH)
+                    for a in all_articles:
+                        r = rel.get(a["id"])
+                        if r:
+                            a["relevance_score"] = round(r["score"], 1)
+                            a["relevance_reason"] = r["reason"]
+
+                digest["_subscribed_domains"] = subscribed
+                digest["_has_profiles"] = bool(profiles)
+
             self.send_json({"digest": digest, "stats": db_stats})
 
         elif path == "/api/digest/for-skill":
@@ -6192,6 +6504,18 @@ class Handler(BaseHTTPRequestHandler):
             has_own = bool(ds_key or dp_key)
             status = _byok.get_quota_status(uid, "animation", has_own, DB_PATH)
             self.send_json({"ok": True, "animation": status})
+
+        elif path == "/api/topics":
+            from db import get_domain_topics
+            topics = get_domain_topics(days=7, db_path=DB_PATH)
+            self.send_json({"topics": topics})
+
+        elif path == "/api/user/domains":
+            user = _get_session(self)
+            if not user:
+                self.send_json({"domains": []}); return
+            from db import get_subscribed_domains
+            self.send_json({"domains": get_subscribed_domains(user["email"], DB_PATH)})
 
         else:
             self.send_response(404)
@@ -6587,6 +6911,19 @@ class Handler(BaseHTTPRequestHandler):
                     pass
             self.send_json({"translations": translations})
 
+        elif self.path == "/api/user/domains":
+            user = _get_session(self)
+            if not user:
+                self.send_json({"ok": False, "msg": "未登录"}, 401); return
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            domains = body.get("domains", [])
+            if not isinstance(domains, list):
+                self.send_json({"ok": False, "msg": "格式错误"}, 400); return
+            from db import update_subscribed_domains
+            update_subscribed_domains(user["email"], domains, DB_PATH)
+            self.send_json({"ok": True, "domains": domains})
+
         elif self.path == "/api/research-profiles":
             user = self._require_login()
             if not user: return
@@ -6609,6 +6946,18 @@ class Handler(BaseHTTPRequestHandler):
                     pass
             expanded = expand_research_direction(direction, api_key or DEEPSEEK_API_KEY)
             pid = create_research_profile(user["email"], name, direction, expanded, DB_PATH)
+            # 立刻在后台对近7天文章打相关性分，用户无需等待下次每日任务
+            _api_key = api_key or DEEPSEEK_API_KEY
+            import threading
+            def _score_new_profile(pid, direction, expanded, api_key, db_path):
+                from analyze import score_articles_for_profile
+                score_articles_for_profile(pid, direction, expanded, api_key,
+                                           limit=200, days=7, db_path=db_path)
+            threading.Thread(
+                target=_score_new_profile,
+                args=(pid, direction, expanded, _api_key, DB_PATH),
+                daemon=True
+            ).start()
             self.send_json({"ok": True, "id": pid,
                             "expanded_keywords": expanded})
 
