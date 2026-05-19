@@ -120,12 +120,17 @@ def cmd_daily(args):
     from analyze import recommend_titles
     recommend_titles(topic=args.topic, db_path=args.db)
 
-    print("\n[5/5] 关键词订阅推送...")
+    print("\n[5/6] 关键词订阅推送...")
     from mailer import run_daily_push
     run_daily_push(db_path=args.db)
 
+    print("\n[6/6] 生成研究热点描述...")
+    from analyze import generate_trend_descriptions
+    trends = generate_trend_descriptions(db_path=args.db)
+    print(f"✓ 热点描述生成完成，共 {len(trends)} 个方向")
+
     print("\n" + "=" * 50)
-    print("✓ 每日Pipeline完成！（fetch → score → score-users → titles → push）")
+    print("✓ 每日Pipeline完成！（fetch → score → score-users → titles → push → trends）")
     print("下一步：选择一个标题，运行 python generate.py 生成初稿")
 
 

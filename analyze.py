@@ -702,6 +702,80 @@ def analyze_trends(db_path: str = "corpus/corpus.db",
     return deduped[:top_n]
 
 
+def generate_trend_descriptions(db_path: str = "corpus/corpus.db") -> list:
+    """
+    对 analyze_trends() 的结果调用 DeepSeek 生成中文描述，
+    结果存入 app_state['trend_descriptions']，有效期24小时。
+    返回带描述的 trends 列表。
+    """
+    import time
+    from db import get_conn
+
+    # 读缓存
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT value FROM app_state WHERE key='trend_descriptions'"
+    ).fetchone()
+    conn.close()
+
+    if row and row["value"]:
+        try:
+            cached = json.loads(row["value"])
+            if time.time() - cached.get("ts", 0) < 86400:
+                return cached["trends"]
+        except Exception:
+            pass
+
+    # 重新计算热点
+    trends = analyze_trends(db_path, top_n=10)
+    if not trends:
+        return []
+
+    # 构建 prompt
+    blocks = []
+    for i, t in enumerate(trends, 1):
+        titles = "\n".join(
+            f"    - {a['title']}" for a in t.get("articles", [])[:3]
+        )
+        blocks.append(f"{i}. 关键词：{t['keyword']}（{t['count']}篇）\n{titles}")
+    prompt = f"""你是医疗AI领域的科研助手。以下是近7天上升最快的研究热点关键词及代表论文标题。
+
+请为每个热点写一段简短描述（2句话，50字以内），说明：
+1. 这个方向最近在研究什么
+2. 为什么值得关注
+
+只输出JSON，格式：
+{{"descriptions": [{{"keyword": "关键词", "desc": "描述文字"}}]}}
+
+热点列表：
+{chr(10).join(blocks)}"""
+
+    try:
+        client = get_client()
+        text = chat(client, prompt, max_tokens=1500)
+        text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        result = json.loads(text)
+        desc_map = {d["keyword"]: d["desc"] for d in result.get("descriptions", [])}
+        for t in trends:
+            t["desc"] = desc_map.get(t["keyword"], "")
+    except Exception as e:
+        print(f"⚠ 热点描述生成失败: {e}")
+        for t in trends:
+            t["desc"] = ""
+
+    # 存缓存
+    payload = json.dumps({"ts": time.time(), "trends": trends}, ensure_ascii=False)
+    conn = get_conn(db_path)
+    conn.execute(
+        "INSERT OR REPLACE INTO app_state (key, value) VALUES ('trend_descriptions', ?)",
+        (payload,)
+    )
+    conn.commit()
+    conn.close()
+
+    return trends
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="AI分析模块")

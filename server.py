@@ -2717,6 +2717,14 @@ function showTrendDetail(idx) {
   const arrow = t.trend_score > 1 ? '🔥' : t.trend_score > 0 ? '📈' : '➡️';
   const pct = t.trend_score > 0
     ? `+${Math.round(t.trend_score * 100)}%` : `${Math.round(t.trend_score * 100)}%`;
+
+  const descHtml = t.desc
+    ? `<div style="background:#f0f7ff;border-left:3px solid #3182ce;border-radius:0 8px 8px 0;
+                  padding:10px 14px;margin-bottom:16px;font-size:14px;color:#2d3748;line-height:1.7">
+         ${t.desc}
+       </div>`
+    : '';
+
   const arts = (t.articles || []).map((a, i) =>
     `<div style="padding:8px 0;border-bottom:1px solid #f0f0f0">
        <a href="${a.url || '#'}" target="_blank"
@@ -2727,17 +2735,17 @@ function showTrendDetail(idx) {
      </div>`
   ).join('') || '<div style="color:#a0aec0;font-size:13px">暂无代表论文</div>';
 
-  const modal = document.getElementById('trendModal');
   document.getElementById('trendModalContent').innerHTML = `
     <div style="font-size:18px;font-weight:700;color:#2d3748;margin-bottom:4px">
       ${arrow} ${t.keyword}
     </div>
-    <div style="font-size:13px;color:#718096;margin-bottom:16px">
+    <div style="font-size:13px;color:#718096;margin-bottom:12px">
       近7天 <strong>${t.count}</strong> 篇 · 增长 <strong style="color:#e53e3e">${pct}</strong>
     </div>
+    ${descHtml}
     <div style="font-size:12px;font-weight:700;color:#a0aec0;letter-spacing:.06em;margin-bottom:8px">代表论文</div>
     ${arts}`;
-  modal.style.display = 'flex';
+  document.getElementById('trendModal').style.display = 'flex';
 }
 
 function closeTrendModal(e) {
@@ -6612,13 +6620,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"topics": topics})
 
         elif path == "/api/trends":
-            from analyze import analyze_trends
-            qs = parse_qs(urlparse(self.path).query)
-            recent = int(qs.get("recent", ["7"])[0])
-            baseline = int(qs.get("baseline", ["30"])[0])
-            trends = analyze_trends(DB_PATH, recent_days=recent,
-                                    baseline_days=baseline, top_n=15)
-            # 精简 articles 字段，只传前端需要的
+            from analyze import generate_trend_descriptions
+            trends = generate_trend_descriptions(DB_PATH)
             for t in trends:
                 t['articles'] = [
                     {'id': a['id'], 'title': a['title'],
