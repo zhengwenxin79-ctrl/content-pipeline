@@ -290,6 +290,8 @@ def match_articles(keywords: str, days: int = 1, db_path: str = DB_PATH) -> list
         FROM articles
         WHERE ({conditions})
           AND fetched_at >= datetime('now', ?)
+          AND is_processed = 1
+          AND quality_score > 0
         ORDER BY quality_score DESC
         LIMIT 10
     """, params).fetchall()
@@ -387,7 +389,7 @@ def _render_article_card(idx: int, a: dict) -> str:
         f'border-left:3px solid #f6ad55">💡 {summary}</div>'
     ) if summary else ""
 
-    score_tag = "" if relevance_score is not None else f"&nbsp;·&nbsp; ⭐ {score:.1f}分"
+    score_tag = f"&nbsp;·&nbsp; ⭐ {score:.1f}分"
 
     return f"""
         <div style="padding:16px 0;border-bottom:1px solid #f0f0f0">
