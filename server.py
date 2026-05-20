@@ -2872,106 +2872,161 @@ async function renderStreamGraph() {
   try {
     const res = await fetch('/api/trends/history?days=30&top=8');
     data = await res.json();
-  } catch(e) { svg.innerHTML = '<text x="50%" y="60" text-anchor="middle" fill="#e53e3e" font-size="13">加载失败</text>'; return; }
+  } catch(e) {
+    svg.innerHTML = '<text x="50%" y="60" text-anchor="middle" fill="#e53e3e" font-size="13">加载失败</text>';
+    return;
+  }
 
   const dates = data.dates || [];
-  const series = data.series || [];
+  let series = data.series || [];
   if (!dates.length || !series.length) {
     svg.innerHTML = '<text x="50%" y="60" text-anchor="middle" fill="#a0aec0" font-size="13">暂无历史数据</text>';
     return;
   }
 
-  const W = svg.parentElement.clientWidth - 32;
-  const H = 240;
-  const PL = 8, PR = 8, PT = 10, PB = 36;
-  const IW = W - PL - PR, IH = H - PT - PB;
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  svg.setAttribute('height', H);
-
-  const palette = ['#667eea','#e53e3e','#38a169','#dd6b20','#805ad5','#3182ce','#d53f8c','#d69e2e'];
   const n = dates.length;
 
-  // 平滑窗口
-  function smooth(arr, w=3) {
-    return arr.map((v, i) => {
+  // 平滑（5天窗口）
+  function smooth(arr, w=5) {
+    return arr.map((_, i) => {
       const s = arr.slice(Math.max(0,i-w), i+w+1);
       return s.reduce((a,b)=>a+b,0)/s.length;
     });
   }
-
-  // 计算每天各 series 的平滑值
   const smoothed = series.map(s => smooth(s.counts));
 
-  // stack: baseline 居中（wiggle）
-  const totals = dates.map((_, i) => smoothed.reduce((s, arr) => s + arr[i], 0));
-  const maxTotal = Math.max(...totals, 1);
+  // 按近7天 vs 前期 计算增长率，决定颜色冷暖
+  function growthRate(arr) {
+    const recent = arr.slice(-7).reduce((a,b)=>a+b,0)/7;
+    const early  = arr.slice(0, Math.max(1, n-7)).reduce((a,b)=>a+b,0)/Math.max(1,n-7);
+    return recent / (early + 0.5);
+  }
+  const rates = smoothed.map(arr => growthRate(arr));
+  // 按增长率排序（高→低），最热的放最前面
+  const order = rates.map((_,i)=>i).sort((a,b)=>rates[b]-rates[a]);
+  series  = order.map(i=>series[i]);
+  const sortedSmoothed = order.map(i=>smoothed[i]);
+  const sortedRates = order.map(i=>rates[i]);
 
-  // 上下叠加，基线居中
+  // 颜色：按增长率映射，最热=红橙，稳定=蓝绿
+  const hotPalette  = ['#E53E3E','#ED8936','#ECC94B','#38A169'];
+  const coolPalette = ['#3182CE','#805AD5','#319795','#718096'];
+  function colorFor(rank, total) {
+    const ratio = rank / Math.max(total-1, 1);
+    const warm = hotPalette[Math.min(rank, hotPalette.length-1)];
+    const cool = coolPalette[Math.min(rank - hotPalette.length, coolPalette.length-1)];
+    return rank < hotPalette.length ? warm : cool;
+  }
+  const palette = series.map((_,i) => colorFor(i, series.length));
+
+  // ── 归一化堆叠：每天各话题占比之和=1，看份额变化 ──
+  const normSmoothed = sortedSmoothed.map(arr => {
+    return arr.map((v, i) => {
+      const total = sortedSmoothed.reduce((s, a) => s + a[i], 0);
+      return total > 0 ? v / total : 0;
+    });
+  });
+
+  // 累积堆叠（从底部往上）
   const tops = series.map(() => new Array(n).fill(0));
   const bots = series.map(() => new Array(n).fill(0));
   for (let i = 0; i < n; i++) {
-    let above = 0, below = 0;
-    const half = totals[i] / 2;
-    smoothed.forEach((arr, si) => {
-      const v = arr[i];
-      bots[si][i] = -half + below;
-      tops[si][i] = -half + below + v;
-      below += v;
+    let cum = 0;
+    normSmoothed.forEach((arr, si) => {
+      bots[si][i] = cum;
+      cum += arr[i];
+      tops[si][i] = cum;
     });
   }
 
-  function xFor(i) { return PL + (i / (n - 1)) * IW; }
-  function yFor(v) { return PT + IH / 2 - (v / maxTotal) * IH * 0.9; }
+  const W = svg.parentElement.clientWidth - 32;
+  const H = 260;
+  const PL = 10, PR = 10, PT = 8, PB = 38;
+  const IW = W - PL - PR, IH = H - PT - PB;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('height', H);
 
-  function catmull(pts) {
+  function xFor(i) { return PL + (i / Math.max(n-1,1)) * IW; }
+  function yFor(v) { return PT + IH * (1 - v); }  // v in [0,1]
+
+  function bezierPath(pts) {
     if (pts.length < 2) return '';
-    let d = `M ${pts[0][0]} ${pts[0][1]}`;
+    let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
     for (let i = 0; i < pts.length - 1; i++) {
       const p0 = pts[Math.max(i-1,0)];
       const p1 = pts[i];
       const p2 = pts[i+1];
-      const p3 = pts[Math.min(i+2, pts.length-1)];
-      const cp1x = p1[0] + (p2[0]-p0[0])/6;
-      const cp1y = p1[1] + (p2[1]-p0[1])/6;
-      const cp2x = p2[0] - (p3[0]-p1[0])/6;
-      const cp2y = p2[1] - (p3[1]-p1[1])/6;
-      d += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${p2[0]} ${p2[1]}`;
+      const p3 = pts[Math.min(i+2,pts.length-1)];
+      const cp1x = p1[0] + (p2[0]-p0[0])/5;
+      const cp1y = p1[1] + (p2[1]-p0[1])/5;
+      const cp2x = p2[0] - (p3[0]-p1[0])/5;
+      const cp2y = p2[1] - (p3[1]-p1[1])/5;
+      d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)} ${cp2x.toFixed(1)} ${cp2y.toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
     }
     return d;
   }
 
   let svgHtml = '';
 
-  series.forEach((s, si) => {
-    const color = palette[si % palette.length];
-    const topPts = dates.map((_, i) => [xFor(i), yFor(tops[si][i])]);
-    const botPts = dates.map((_, i) => [xFor(i), yFor(bots[si][i])]).reverse();
-    const topPath = catmull(topPts);
-    const botPath = catmull(botPts);
-    const lastTop = botPts[0]; // reversed, so first is last date
-    const d = `${topPath} L ${lastTop[0]} ${lastTop[1]} ${botPath.replace(/^M[^C]*/, '')} Z`;
-    svgHtml += `<path d="${d}" fill="${color}" fill-opacity="0.75" stroke="${color}" stroke-width="0.5"
-      data-si="${si}" style="cursor:pointer" onmousemove="streamHover(event,${si})" onmouseleave="streamLeave()"/>`;
-  });
-
-  // X轴刻度（每5天）
-  for (let i = 0; i < n; i += 5) {
-    const x = xFor(i);
-    const label = dates[i].slice(5); // MM-DD
-    svgHtml += `<text x="${x}" y="${H - 4}" text-anchor="middle" font-size="10" fill="#a0aec0">${label}</text>`;
-    svgHtml += `<line x1="${x}" y1="${PT}" x2="${x}" y2="${H-PB}" stroke="#f0f0f0" stroke-width="1"/>`;
+  // 背景网格
+  for (let pct = 0.25; pct < 1; pct += 0.25) {
+    const y = yFor(pct);
+    svgHtml += `<line x1="${PL}" y1="${y.toFixed(1)}" x2="${PL+IW}" y2="${y.toFixed(1)}" stroke="#f0f0f0" stroke-width="1"/>`;
+    svgHtml += `<text x="${PL-4}" y="${(y+4).toFixed(1)}" text-anchor="end" font-size="9" fill="#cbd5e0">${Math.round(pct*100)}%</text>`;
   }
 
-  svg.innerHTML = svgHtml;
-  window._streamData = {dates, series, smoothed, palette};
+  // 绘制色带（从底部到顶部，底层先画）
+  for (let si = series.length-1; si >= 0; si--) {
+    const color = palette[si];
+    const topPts = dates.map((_, i) => [xFor(i), yFor(tops[si][i])]);
+    const botPts = [...dates.map((_, i) => [xFor(i), yFor(bots[si][i])])].reverse();
+    const tPath = bezierPath(topPts);
+    const bPath = bezierPath(botPts);
+    const close = `L ${botPts[0][0].toFixed(1)} ${botPts[0][1].toFixed(1)}`;
+    const d = `${tPath} ${close} ${bPath.replace(/^M[\d\.\s]+/, 'L ')} Z`;
+    svgHtml += `<path d="${d}" fill="${color}" fill-opacity="0.82"
+      stroke="white" stroke-width="0.8" stroke-opacity="0.5"
+      style="cursor:pointer;transition:fill-opacity .2s"
+      onmouseover="this.setAttribute('fill-opacity','1')"
+      onmouseout="this.setAttribute('fill-opacity','0.82')"
+      onmousemove="streamHover(event,${si})" onmouseleave="streamLeave()"/>`;
+  }
 
-  // 图例
-  legend.innerHTML = series.map((s, i) =>
-    `<div style="display:flex;align-items:center;gap:4px;cursor:pointer" onclick="showTrendDetail(${i})">
-       <span style="width:10px;height:10px;border-radius:50%;background:${palette[i%palette.length]};flex-shrink:0"></span>
-       <span style="color:#4a5568">${s.keyword}</span>
-     </div>`
-  ).join('');
+  // X轴刻度
+  for (let i = 0; i < n; i += 5) {
+    const x = xFor(i);
+    svgHtml += `<line x1="${x.toFixed(1)}" y1="${PT}" x2="${x.toFixed(1)}" y2="${(PT+IH).toFixed(1)}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="3,3"/>`;
+    svgHtml += `<text x="${x.toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="10" fill="#a0aec0">${dates[i].slice(5)}</text>`;
+  }
+
+  // 最右侧标签
+  series.forEach((s, si) => {
+    const topVal = tops[si][n-1];
+    const botVal = bots[si][n-1];
+    const midY = yFor((topVal + botVal) / 2);
+    const bandH = yFor(botVal) - yFor(topVal);
+    if (bandH > 14) {
+      svgHtml += `<text x="${(PL+IW+4).toFixed(1)}" y="${(midY+4).toFixed(1)}"
+        font-size="10" fill="${palette[si]}" font-weight="600">${s.keyword}</text>`;
+    }
+  });
+
+  svg.innerHTML = svgHtml;
+  window._streamData = {dates, series, smoothed: sortedSmoothed, palette};
+
+  // 图例：按增长率排序，标注热度
+  legend.innerHTML = series.map((s, i) => {
+    const rate = sortedRates[i];
+    const tag = rate > 2 ? '🔥' : rate > 1.2 ? '📈' : '➡️';
+    return `<div style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:2px 6px;
+                         border-radius:6px;border:1px solid #e2e8f0;background:white"
+                  onclick="showTrendDetail(${i})"
+                  onmouseover="this.style.borderColor='${palette[i]}'"
+                  onmouseout="this.style.borderColor='#e2e8f0'">
+       <span style="width:10px;height:10px;border-radius:2px;background:${palette[i]};flex-shrink:0"></span>
+       <span style="font-size:12px;color:#2d3748;font-weight:500">${tag} ${s.keyword}</span>
+     </div>`;
+  }).join('');
 }
 
 function streamHover(e, si) {
