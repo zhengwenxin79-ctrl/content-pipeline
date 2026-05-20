@@ -1289,8 +1289,9 @@ def process_article_pdf(article_url: str, progress_cb=None,
     if not pdf_url:
         return [{"ok": False, "error": "该来源不支持自动下载 PDF，请手动上传图片"}]
 
-    # 下载前 HEAD 请求获取文件大小，给用户预估时间
+    # 下载前 HEAD 请求获取文件大小，给用户预估时间，并动态调整 timeout
     # 注意：requests.head 默认不跟重定向，需显式 allow_redirects=True
+    dl_timeout = 90  # 默认 total_timeout
     try:
         head = requests.head(pdf_url, timeout=8, allow_redirects=True,
                              headers={"User-Agent": "Mozilla/5.0 (research bot)"})
@@ -1298,6 +1299,8 @@ def process_article_pdf(article_url: str, progress_cb=None,
         if size_bytes > 50_000:  # 至少 50KB 才算是真实 PDF 大小，过滤掉重定向 HTML
             size_mb = size_bytes / 1024 / 1024
             est_sec = max(10, int(size_mb * 8))  # 粗估：约1MB/s
+            # timeout 至少比预估时间多 30s 缓冲，避免卡死在下载阶段
+            dl_timeout = max(90, est_sec + 30)
             _cb(f"📥 正在下载论文 PDF（{size_mb:.1f} MB，预计 {est_sec} 秒）...")
         else:
             _cb("📥 正在下载论文 PDF...")
@@ -1305,14 +1308,15 @@ def process_article_pdf(article_url: str, progress_cb=None,
         _cb("📥 正在下载论文 PDF...")
 
     try:
-        pdf_bytes = download_pdf(pdf_url)
+        pdf_bytes = download_pdf(pdf_url, total_timeout=dl_timeout)
     except (TimeoutError, requests.Timeout, requests.ConnectionError) as e:
         # Bug A：原本只 catch Python 内置 TimeoutError，
         # 但 requests 实际抛 requests.exceptions.ReadTimeout/ConnectTimeout/ConnectionError，
         # 这些都应该触发重试一次。
-        _cb(f"⏳ 下载{'超时' if isinstance(e, (TimeoutError, requests.Timeout)) else '连接失败'}，正在重试（第2次，延长至120s）...")
+        retry_timeout = max(dl_timeout + 60, 120)
+        _cb(f"⏳ 下载{'超时' if isinstance(e, (TimeoutError, requests.Timeout)) else '连接失败'}，正在重试（第2次，延长至{retry_timeout}s）...")
         try:
-            pdf_bytes = download_pdf(pdf_url, connect_timeout=30, total_timeout=120)
+            pdf_bytes = download_pdf(pdf_url, connect_timeout=30, total_timeout=retry_timeout)
         except Exception as e2:
             return [{"ok": False, "error": f"PDF 下载失败（重试后仍失败）：{e2}（URL: {pdf_url}）"}]
     except Exception as e:
