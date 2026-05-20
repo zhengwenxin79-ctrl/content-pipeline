@@ -1930,7 +1930,7 @@ HTML = """<!DOCTYPE html>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
         <span style="font-size:14px;font-weight:700;color:#2d3748">
           🔥 研究热点追踪
-          <span style="font-size:11px;font-weight:400;color:#a0aec0;margin-left:6px">· 近7天上升最快的方向</span>
+          <span style="font-size:11px;font-weight:400;color:#a0aec0;margin-left:6px">· 近7天上升最快的方向 · <span style="color:#667eea">点击卡片查看 AI 解读和代表论文</span></span>
         </span>
         <button onclick="loadTrends()" style="background:none;border:none;color:#a0aec0;font-size:18px;cursor:pointer" title="刷新">⟳</button>
       </div>
