@@ -139,13 +139,8 @@ def get_quota_status(user_id: int, feature: str, has_own_key: bool,
             "has_own_key": False, "unlimited": False}
 
 
-def check_and_consume(user_id: int, feature: str, has_own_key: bool,
-                      db_path: str):
-    """
-    检查配额并消耗一次。
-    - has_own_key=True：直接放行，不消耗免费配额
-    - 超限时抛出 QuotaExceeded
-    """
+def check_quota(user_id: int, feature: str, has_own_key: bool, db_path: str):
+    """只检查配额是否超限，不消耗。超限时抛出 QuotaExceeded。"""
     if has_own_key:
         return
     limit = QUOTA_LIMITS.get(feature, 0)
@@ -156,18 +151,33 @@ def check_and_consume(user_id: int, feature: str, has_own_key: bool,
         (user_id, feature, today)
     ).fetchone()
     used = row[0] if row else 0
+    conn.close()
     if used >= limit:
-        conn.close()
         raise QuotaExceeded(
             f"今日免费动画解析已用完（{used}/{limit} 次），"
             f"可在「个人设置 → API Keys」填入自己的 key 解除限制"
         )
+
+
+def consume_quota(user_id: int, feature: str, has_own_key: bool, db_path: str):
+    """消耗一次配额（不检查是否超限，调用前应先 check_quota）。"""
+    if has_own_key:
+        return
+    today = _today_cst()
+    conn = sqlite3.connect(db_path)
     conn.execute("""
         INSERT INTO user_quota_usage(user_id, feature, date, count) VALUES(?, ?, ?, 1)
         ON CONFLICT(user_id, feature, date) DO UPDATE SET count = count + 1
     """, (user_id, feature, today))
     conn.commit()
     conn.close()
+
+
+def check_and_consume(user_id: int, feature: str, has_own_key: bool,
+                      db_path: str):
+    """检查配额并消耗一次（兼容旧调用）。"""
+    check_quota(user_id, feature, has_own_key, db_path)
+    consume_quota(user_id, feature, has_own_key, db_path)
 
 
 # ── Key 验证 ──────────────────────────────────────────────────────────────────

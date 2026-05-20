@@ -7614,7 +7614,7 @@ class Handler(BaseHTTPRequestHandler):
             _dp_key = _byok.get_user_key(user_id, "deepseek",  DB_PATH)
             _has_own = bool(_ds_key or _dp_key)
             try:
-                _byok.check_and_consume(user_id, "animation", _has_own, DB_PATH)
+                _byok.check_quota(user_id, "animation", _has_own, DB_PATH)
             except _byok.QuotaExceeded as _qe:
                 self.send_json({"ok": False, "msg": str(_qe), "quota_exceeded": True}); return
 
@@ -7623,7 +7623,7 @@ class Handler(BaseHTTPRequestHandler):
             _anim_tasks[task_id] = {"status": "running", "progress": "准备中...", "results": [], "_ts": _time.time()}
 
             def _run_animation(task_id, article_id, image_b64, article_url, abstract,
-                               ds_key, dp_key):
+                               ds_key, dp_key, _uid, _has_own):
                 import animation_service
                 # 保持 animation_service 能读到当前环境变量
                 import os as _os
@@ -7704,6 +7704,8 @@ class Handler(BaseHTTPRequestHandler):
                     skip_n  = sum(1 for r in saved if r.get("skipped"))
                     err_n   = len(saved) - ok_n - skip_n
                     if ok_n:
+                        import byok as _byok2
+                        _byok2.consume_quota(_uid, "animation", _has_own, DB_PATH)
                         final_msg = f"✅ 完成，生成了 {ok_n} 个动画"
                     elif skip_n and not err_n:
                         # 优先使用后端给出的 reason（已包含"建议点击深度分析"等引导文案）
@@ -7728,7 +7730,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 t = threading.Thread(target=_run_animation,
                                      args=(task_id, article_id, image_b64, article_url, abstract,
-                                           _ds_key, _dp_key),
+                                           _ds_key, _dp_key, user_id, _has_own),
                                      daemon=True)
                 t.start()
                 self.send_json({"ok": True, "task_id": task_id})
