@@ -7319,7 +7319,6 @@ class Handler(BaseHTTPRequestHandler):
             pid = create_research_profile(user["email"], name, direction, expanded, DB_PATH)
             # 立刻在后台对近7天文章打相关性分，用户无需等待下次每日任务
             _api_key = api_key or DEEPSEEK_API_KEY
-            import threading
             def _score_new_profile(pid, direction, expanded, api_key, db_path):
                 from analyze import score_articles_for_profile
                 score_articles_for_profile(pid, direction, expanded, api_key,
