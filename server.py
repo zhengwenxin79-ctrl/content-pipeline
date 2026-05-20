@@ -1927,14 +1927,38 @@ HTML = """<!DOCTYPE html>
 
     <!-- 热点追踪 -->
     <div id="trendsSection" style="margin-bottom:20px;display:none">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
         <span style="font-size:14px;font-weight:700;color:#2d3748">
           🔥 研究热点追踪
           <span style="font-size:11px;font-weight:400;color:#a0aec0;margin-left:6px">· 近7天上升最快的方向 · <span style="color:#667eea">点击卡片查看 AI 解读和代表论文</span></span>
         </span>
-        <button onclick="loadTrends()" style="background:none;border:none;color:#a0aec0;font-size:18px;cursor:pointer" title="刷新">⟳</button>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="display:flex;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;font-size:12px">
+            <button id="trendTabCards" onclick="switchTrendView('cards')"
+              style="padding:4px 12px;border:none;background:#667eea;color:white;cursor:pointer;font-weight:600">卡片</button>
+            <button id="trendTabCloud" onclick="switchTrendView('cloud')"
+              style="padding:4px 12px;border:none;background:white;color:#718096;cursor:pointer">词云</button>
+            <button id="trendTabStream" onclick="switchTrendView('stream')"
+              style="padding:4px 12px;border:none;background:white;color:#718096;cursor:pointer">河流图</button>
+          </div>
+          <button onclick="loadTrends()" style="background:none;border:none;color:#a0aec0;font-size:18px;cursor:pointer" title="刷新">⟳</button>
+        </div>
       </div>
+      <!-- 卡片视图 -->
       <div id="trendsCards" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+      <!-- 词云视图 -->
+      <div id="trendsCloud" style="display:none;background:white;border-radius:12px;padding:12px;box-shadow:0 1px 4px rgba(0,0,0,.06)">
+        <canvas id="wordCloudCanvas" style="width:100%;display:block;cursor:pointer"></canvas>
+      </div>
+      <!-- 河流图视图 -->
+      <div id="trendsStream" style="display:none;background:white;border-radius:12px;padding:16px;box-shadow:0 1px 4px rgba(0,0,0,.06)">
+        <div id="streamLegend" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px;font-size:12px"></div>
+        <div style="position:relative">
+          <svg id="streamSvg" style="width:100%;overflow:visible"></svg>
+          <div id="streamTooltip" style="display:none;position:absolute;background:rgba(0,0,0,.75);color:white;
+               padding:6px 10px;border-radius:6px;font-size:12px;pointer-events:none;white-space:nowrap"></div>
+        </div>
+      </div>
     </div>
     <!-- 动画解析配额条（登录后显示） -->
     <div id="quotaBar" style="display:none;align-items:center;justify-content:space-between;gap:12px;
@@ -2751,6 +2775,226 @@ function showTrendDetail(idx) {
 function closeTrendModal(e) {
   if (!e || e.target === document.getElementById('trendModal'))
     document.getElementById('trendModal').style.display = 'none';
+}
+
+// ── 热点视图切换 ──────────────────────────────────────────────
+function switchTrendView(view) {
+  ['cards','cloud','stream'].forEach(v => {
+    document.getElementById('trends' + v.charAt(0).toUpperCase() + v.slice(1)).style.display = 'none';
+    const btn = document.getElementById('trendTab' + v.charAt(0).toUpperCase() + v.slice(1));
+    btn.style.background = 'white'; btn.style.color = '#718096'; btn.style.fontWeight = '400';
+  });
+  document.getElementById('trends' + view.charAt(0).toUpperCase() + view.slice(1)).style.display = 'block';
+  const activeBtn = document.getElementById('trendTab' + view.charAt(0).toUpperCase() + view.slice(1));
+  activeBtn.style.background = '#667eea'; activeBtn.style.color = 'white'; activeBtn.style.fontWeight = '600';
+
+  if (view === 'cloud') renderWordCloud();
+  if (view === 'stream') renderStreamGraph();
+}
+
+// ── 词云 ──────────────────────────────────────────────────────
+function renderWordCloud() {
+  const trends = window._trendsData || [];
+  if (!trends.length) return;
+  const canvas = document.getElementById('wordCloudCanvas');
+  const W = canvas.parentElement.clientWidth - 24;
+  const H = Math.round(W * 0.42);
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  const maxCount = Math.max(...trends.map(t => t.count));
+  const minCount = Math.min(...trends.map(t => t.count));
+  const palette = ['#e53e3e','#dd6b20','#d69e2e','#38a169','#3182ce','#805ad5','#d53f8c','#2b6cb0'];
+
+  const placed = [];
+  const hitMap = []; // for click detection
+
+  function sizeFor(count) {
+    const ratio = (count - minCount) / Math.max(maxCount - minCount, 1);
+    return Math.round(14 + ratio * 36);
+  }
+  function overlaps(x, y, w, h) {
+    const pad = 6;
+    for (const p of placed) {
+      if (x < p.x + p.w + pad && x + w + pad > p.x &&
+          y < p.y + p.h + pad && y + h + pad > p.y) return true;
+    }
+    return x < 0 || y < 0 || x + w > W || y + h > H;
+  }
+
+  const cx = W / 2, cy = H / 2;
+  const sorted = [...trends].sort((a, b) => b.count - a.count);
+
+  sorted.forEach((t, i) => {
+    const fontSize = sizeFor(t.count);
+    ctx.font = `700 ${fontSize}px -apple-system,sans-serif`;
+    const tw = ctx.measureText(t.keyword).width;
+    const th = fontSize * 1.2;
+    const color = palette[i % palette.length];
+
+    let found = false;
+    for (let r = 0; r < Math.max(W, H) * 0.6; r += 3) {
+      for (let a = 0; a < Math.PI * 2; a += 0.18) {
+        const x = cx + r * Math.cos(a) - tw / 2;
+        const y = cy + r * Math.sin(a) + th / 3;
+        if (!overlaps(x - tw / 2, y - th, tw, th)) {
+          ctx.fillStyle = color;
+          ctx.fillText(t.keyword, x, y);
+          placed.push({x: x - tw / 2, y: y - th, w: tw, h: th});
+          hitMap.push({x: x - tw / 2, y: y - th, w: tw, h: th, idx: i});
+          found = true; break;
+        }
+      }
+      if (found) break;
+    }
+  });
+
+  canvas.onclick = e => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (W / rect.width);
+    const my = (e.clientY - rect.top) * (H / rect.height);
+    for (const h of hitMap) {
+      if (mx >= h.x && mx <= h.x + h.w && my >= h.y && my <= h.y + h.h) {
+        showTrendDetail(h.idx); break;
+      }
+    }
+  };
+}
+
+// ── 河流图 ────────────────────────────────────────────────────
+async function renderStreamGraph() {
+  const svg = document.getElementById('streamSvg');
+  const legend = document.getElementById('streamLegend');
+  svg.innerHTML = '<text x="50%" y="60" text-anchor="middle" fill="#a0aec0" font-size="13">加载中...</text>';
+
+  let data;
+  try {
+    const res = await fetch('/api/trends/history?days=30&top=8');
+    data = await res.json();
+  } catch(e) { svg.innerHTML = '<text x="50%" y="60" text-anchor="middle" fill="#e53e3e" font-size="13">加载失败</text>'; return; }
+
+  const dates = data.dates || [];
+  const series = data.series || [];
+  if (!dates.length || !series.length) {
+    svg.innerHTML = '<text x="50%" y="60" text-anchor="middle" fill="#a0aec0" font-size="13">暂无历史数据</text>';
+    return;
+  }
+
+  const W = svg.parentElement.clientWidth - 32;
+  const H = 240;
+  const PL = 8, PR = 8, PT = 10, PB = 36;
+  const IW = W - PL - PR, IH = H - PT - PB;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('height', H);
+
+  const palette = ['#667eea','#e53e3e','#38a169','#dd6b20','#805ad5','#3182ce','#d53f8c','#d69e2e'];
+  const n = dates.length;
+
+  // 平滑窗口
+  function smooth(arr, w=3) {
+    return arr.map((v, i) => {
+      const s = arr.slice(Math.max(0,i-w), i+w+1);
+      return s.reduce((a,b)=>a+b,0)/s.length;
+    });
+  }
+
+  // 计算每天各 series 的平滑值
+  const smoothed = series.map(s => smooth(s.counts));
+
+  // stack: baseline 居中（wiggle）
+  const totals = dates.map((_, i) => smoothed.reduce((s, arr) => s + arr[i], 0));
+  const maxTotal = Math.max(...totals, 1);
+
+  // 上下叠加，基线居中
+  const tops = series.map(() => new Array(n).fill(0));
+  const bots = series.map(() => new Array(n).fill(0));
+  for (let i = 0; i < n; i++) {
+    let above = 0, below = 0;
+    const half = totals[i] / 2;
+    smoothed.forEach((arr, si) => {
+      const v = arr[i];
+      bots[si][i] = -half + below;
+      tops[si][i] = -half + below + v;
+      below += v;
+    });
+  }
+
+  function xFor(i) { return PL + (i / (n - 1)) * IW; }
+  function yFor(v) { return PT + IH / 2 - (v / maxTotal) * IH * 0.9; }
+
+  function catmull(pts) {
+    if (pts.length < 2) return '';
+    let d = `M ${pts[0][0]} ${pts[0][1]}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[Math.max(i-1,0)];
+      const p1 = pts[i];
+      const p2 = pts[i+1];
+      const p3 = pts[Math.min(i+2, pts.length-1)];
+      const cp1x = p1[0] + (p2[0]-p0[0])/6;
+      const cp1y = p1[1] + (p2[1]-p0[1])/6;
+      const cp2x = p2[0] - (p3[0]-p1[0])/6;
+      const cp2y = p2[1] - (p3[1]-p1[1])/6;
+      d += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${p2[0]} ${p2[1]}`;
+    }
+    return d;
+  }
+
+  let svgHtml = '';
+
+  series.forEach((s, si) => {
+    const color = palette[si % palette.length];
+    const topPts = dates.map((_, i) => [xFor(i), yFor(tops[si][i])]);
+    const botPts = dates.map((_, i) => [xFor(i), yFor(bots[si][i])]).reverse();
+    const topPath = catmull(topPts);
+    const botPath = catmull(botPts);
+    const lastTop = botPts[0]; // reversed, so first is last date
+    const d = `${topPath} L ${lastTop[0]} ${lastTop[1]} ${botPath.replace(/^M[^C]*/, '')} Z`;
+    svgHtml += `<path d="${d}" fill="${color}" fill-opacity="0.75" stroke="${color}" stroke-width="0.5"
+      data-si="${si}" style="cursor:pointer" onmousemove="streamHover(event,${si})" onmouseleave="streamLeave()"/>`;
+  });
+
+  // X轴刻度（每5天）
+  for (let i = 0; i < n; i += 5) {
+    const x = xFor(i);
+    const label = dates[i].slice(5); // MM-DD
+    svgHtml += `<text x="${x}" y="${H - 4}" text-anchor="middle" font-size="10" fill="#a0aec0">${label}</text>`;
+    svgHtml += `<line x1="${x}" y1="${PT}" x2="${x}" y2="${H-PB}" stroke="#f0f0f0" stroke-width="1"/>`;
+  }
+
+  svg.innerHTML = svgHtml;
+  window._streamData = {dates, series, smoothed, palette};
+
+  // 图例
+  legend.innerHTML = series.map((s, i) =>
+    `<div style="display:flex;align-items:center;gap:4px;cursor:pointer" onclick="showTrendDetail(${i})">
+       <span style="width:10px;height:10px;border-radius:50%;background:${palette[i%palette.length]};flex-shrink:0"></span>
+       <span style="color:#4a5568">${s.keyword}</span>
+     </div>`
+  ).join('');
+}
+
+function streamHover(e, si) {
+  const tip = document.getElementById('streamTooltip');
+  const d = window._streamData;
+  if (!d) return;
+  const svg = document.getElementById('streamSvg');
+  const rect = svg.getBoundingClientRect();
+  const W = svg.clientWidth;
+  const PL = 8, PR = 8;
+  const IW = W - PL - PR;
+  const mx = e.clientX - rect.left;
+  const i = Math.round(((mx - PL) / IW) * (d.dates.length - 1));
+  const idx = Math.max(0, Math.min(d.dates.length - 1, i));
+  const s = d.series[si];
+  tip.style.display = 'block';
+  tip.style.left = (mx + 12) + 'px';
+  tip.style.top = (e.clientY - rect.top - 10) + 'px';
+  tip.textContent = `${s.keyword}  ${d.dates[idx]}  ${s.counts[idx]}篇`;
+}
+
+function streamLeave() {
+  document.getElementById('streamTooltip').style.display = 'none';
 }
 
 function renderStats(s) {
@@ -6629,6 +6873,13 @@ class Handler(BaseHTTPRequestHandler):
                     for a in t.get('articles', [])
                 ]
             self.send_json({"trends": trends})
+
+        elif path == "/api/trends/history":
+            from analyze import get_trend_history
+            qs = parse_qs(urlparse(self.path).query)
+            days = int(qs.get("days", ["30"])[0])
+            top_n = int(qs.get("top", ["8"])[0])
+            self.send_json(get_trend_history(DB_PATH, days=days, top_n=top_n))
 
         elif path == "/api/user/domains":
             user = _get_session(self)

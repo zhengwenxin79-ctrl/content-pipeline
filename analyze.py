@@ -702,6 +702,91 @@ def analyze_trends(db_path: str = "corpus/corpus.db",
     return deduped[:top_n]
 
 
+def get_trend_history(db_path: str = "corpus/corpus.db",
+                      days: int = 30, top_n: int = 8) -> dict:
+    """
+    返回近 days 天 Top top_n 关键词的每日论文计数，用于河流图。
+    格式：{dates: [...], series: [{keyword, counts: [...]}]}
+    """
+    from collections import defaultdict
+    from datetime import datetime, timedelta, timezone
+    from db import get_conn
+
+    _SKIP = {
+        'large','model','models','using','based','towards','novel','efficient',
+        'study','analysis','approach','method','framework','system','network',
+        'learning','deep','paper','benchmark','evaluation','survey','review',
+        'first','multi','cross','world','generation','generative',
+        'representation','understanding','reasoning','training','language',
+        'vision','visual','image','video','audio','text','tasks','data',
+        'dataset','results','performance','knowledge','information','human',
+        'automated',
+    }
+    _DOMAIN_LABELS = {
+        'NLP','AI','Computer Vision','Machine Learning','Robotics',
+        'Neural Networks','Image & Video','Signal Processing',
+        'Statistics & ML','Medical Physics','Genomics','Neuroscience',
+        'Quantitative Biology','Information Retrieval','Human-Computer Interaction',
+    }
+
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT title, domain_tags, quality_score, fetched_at
+        FROM articles
+        WHERE fetched_at >= datetime('now', ?)
+          AND typeof(quality_score) IN ('real','integer')
+          AND quality_score >= 5.0
+        ORDER BY fetched_at ASC
+    """, (f"-{days} days",)).fetchall()
+    conn.close()
+
+    # 生成日期序列
+    today = datetime.now(timezone.utc).date()
+    date_list = [(today - timedelta(days=days - i - 1)) for i in range(days)]
+    date_strs = [d.isoformat() for d in date_list]
+    date_idx = {d: i for i, d in enumerate(date_strs)}
+
+    # 统计所有关键词总频次（选 top_n）
+    total_kw: dict = defaultdict(int)
+    daily_kw: dict = defaultdict(lambda: defaultdict(int))
+
+    for r in rows:
+        raw = r['fetched_at'] or ''
+        try:
+            t = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+            day = t.date().isoformat()
+        except Exception:
+            continue
+        if day not in date_idx:
+            continue
+
+        tags = []
+        try:
+            tags = json.loads(r['domain_tags'] or '[]')
+        except Exception:
+            pass
+        kws = [t for t in tags[1:]
+               if len(t) >= 5 and t.lower() not in _SKIP and t not in _DOMAIN_LABELS]
+        if not kws:
+            title = r['title'] or ''
+            words = re.findall(r'[A-Za-z][A-Za-z0-9\-]{3,}', title)
+            kws = [w for w in words
+                   if w.lower() not in _SKIP and w not in _DOMAIN_LABELS][:5]
+
+        for kw in kws:
+            total_kw[kw] += 1
+            daily_kw[kw][day] += 1
+
+    top_keywords = sorted(total_kw, key=lambda k: total_kw[k], reverse=True)[:top_n]
+
+    series = []
+    for kw in top_keywords:
+        counts = [daily_kw[kw].get(d, 0) for d in date_strs]
+        series.append({"keyword": kw, "counts": counts})
+
+    return {"dates": date_strs, "series": series}
+
+
 def generate_trend_descriptions(db_path: str = "corpus/corpus.db") -> list:
     """
     对 analyze_trends() 的结果调用 DeepSeek 生成中文描述，
