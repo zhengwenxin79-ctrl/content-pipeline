@@ -1925,6 +1925,18 @@ HTML = """<!DOCTYPE html>
     </div>
     <div class="stats-row" id="statsRow"></div>
 
+    <!-- 新概念预警 -->
+    <div id="emergingSection" style="margin-bottom:20px;display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <span style="font-size:14px;font-weight:700;color:#2d3748">
+          ⚡ 新概念预警
+          <span style="font-size:11px;font-weight:400;color:#a0aec0;margin-left:6px">· 过去3个月几乎没有、最近14天突然冒头的研究方向</span>
+        </span>
+        <button onclick="loadEmerging()" style="background:none;border:none;color:#a0aec0;font-size:18px;cursor:pointer" title="刷新">⟳</button>
+      </div>
+      <div id="emergingCards" style="display:grid;gap:10px"></div>
+    </div>
+
     <!-- 热点追踪 -->
     <div id="trendsSection" style="margin-bottom:20px;display:none">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
@@ -2584,7 +2596,8 @@ async function loadData() {
     fetch('/api/digest'),
     fetch('/api/topics'),
   ]);
-  loadTrends(); // 热点异步加载，不阻塞主流程
+  loadTrends();    // 热点异步加载，不阻塞主流程
+  loadEmerging();  // 新概念预警异步加载
   const data = await digestRes.json();
   const topicsData = await topicsRes.json();
 
@@ -2697,6 +2710,64 @@ function setFeedFilter(filter) {
     btn.style.borderColor = active ? '#667eea' : '#e2e8f0';
   });
   renderDigest(_digestData);
+}
+
+// ── 新概念预警 ────────────────────────────────────────────────
+async function loadEmerging() {
+  const sec = document.getElementById('emergingSection');
+  const box = document.getElementById('emergingCards');
+  box.innerHTML = '<div style="color:#a0aec0;font-size:13px;padding:8px">分析中，首次加载约需15秒…</div>';
+  sec.style.display = 'block';
+  try {
+    const res = await fetch('/api/emerging');
+    const data = await res.json();
+    const concepts = data.concepts || [];
+    if (!concepts.length) { sec.style.display = 'none'; return; }
+
+    const worthColor = {'跟':'#276749','观望':'#92400e','不建议':'#c53030'};
+    const worthBg    = {'跟':'#f0fff4','观望':'#fffbeb','不建议':'#fff5f5'};
+
+    box.innerHTML = concepts.map((c, i) => {
+      const isNew = c.is_new;
+      const badge = isNew
+        ? '<span style="background:#e9d8fd;color:#553c9a;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px">🆕 全新概念</span>'
+        : '<span style="background:#ebf8ff;color:#2b6cb0;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px">📈 快速冒头</span>';
+
+      const worth = c.worth || '观望';
+      const worthTag = `<span style="background:${worthBg[worth]||'#f7fafc'};color:${worthColor[worth]||'#4a5568'};
+        font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;border:1px solid currentColor">
+        ${worth==='跟'?'✅ 建议跟进':worth==='不建议'?'❌ 暂不建议':'👀 建议观望'}
+      </span>`;
+
+      const arts = (c.articles||[]).slice(0,2).map(a =>
+        `<a href="${a.url||'#'}" target="_blank"
+           style="display:block;font-size:12px;color:#4a5568;text-decoration:none;
+                  padding:4px 0;border-bottom:1px solid #f0f0f0;line-height:1.5
+                  ;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+           title="${a.title}">→ ${a.title}</a>`
+      ).join('');
+
+      return `<div style="background:white;border-radius:12px;padding:16px 18px;
+                          box-shadow:0 1px 4px rgba(0,0,0,.06);
+                          border-left:4px solid ${isNew?'#9f7aea':'#4299e1'}">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+          ${badge}
+          <span style="font-size:15px;font-weight:700;color:#2d3748">${c.name_zh||c.concept}</span>
+          <span style="font-size:12px;color:#a0aec0">${c.concept}</span>
+          <span style="margin-left:auto;font-size:12px;color:#718096">近14天 <strong>${c.count}</strong> 篇</span>
+        </div>
+        ${c.what ? `<div style="font-size:13px;color:#4a5568;margin-bottom:6px">📌 ${c.what}</div>` : ''}
+        ${c.why_hot ? `<div style="font-size:13px;color:#718096;margin-bottom:10px">🔥 ${c.why_hot}</div>` : ''}
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+          ${worthTag}
+          ${c.worth_reason ? `<span style="font-size:12px;color:#718096">${c.worth_reason}</span>` : ''}
+        </div>
+        ${arts ? `<div style="margin-top:6px">${arts}</div>` : ''}
+      </div>`;
+    }).join('');
+  } catch(e) {
+    box.innerHTML = '<div style="color:#e53e3e;font-size:13px">加载失败</div>';
+  }
 }
 
 // ── 热点追踪 ─────────────────────────────────────────────────
@@ -6928,6 +6999,19 @@ class Handler(BaseHTTPRequestHandler):
                     for a in t.get('articles', [])
                 ]
             self.send_json({"trends": trends})
+
+        elif path == "/api/emerging":
+            from analyze import explain_emerging_concepts, detect_emerging_concepts
+            concepts = explain_emerging_concepts(db_path=DB_PATH)
+            if not concepts:
+                concepts = detect_emerging_concepts(DB_PATH)
+            for c in concepts:
+                c['articles'] = [
+                    {'id': a['id'], 'title': a['title'],
+                     'url': a.get('url',''), 'source_name': a.get('source_name','')}
+                    for a in c.get('articles', [])
+                ]
+            self.send_json({"concepts": concepts})
 
         elif path == "/api/trends/history":
             from analyze import get_trend_history

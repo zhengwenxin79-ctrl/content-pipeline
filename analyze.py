@@ -702,6 +702,216 @@ def analyze_trends(db_path: str = "corpus/corpus.db",
     return deduped[:top_n]
 
 
+def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
+                             recent_days: int = 14,
+                             baseline_days: int = 90,
+                             top_n: int = 10) -> list:
+    """
+    检测「新冒头」的研究概念：在 recent_days 内突然出现，
+    但在之前 baseline_days 里几乎没有。
+    返回按新颖度排序的概念列表。
+    """
+    from collections import defaultdict
+    from datetime import datetime, timedelta, timezone
+    from db import get_conn
+
+    _STOPWORDS = {
+        'a','an','the','of','in','on','for','with','and','or','to','is','are',
+        'by','from','at','as','be','via','we','our','its','this','that','into',
+        'over','under','new','using','based','towards','novel','large','deep',
+        'multi','cross','self','semi','non','pre','end','two','three','high',
+        'low','fast','real','time','both','each','such','also','than','then',
+        'when','where','how','can','may','not','no','all','any','has','have',
+        'been','were','was','will','their','which','through','between','after',
+        'paper','study','method','approach','framework','model','models',
+        'system','network','learning','training','evaluation','benchmark',
+        'analysis','results','performance','dataset','data','task','tasks',
+        'show','shows','achieve','achieves','propose','proposed','present',
+    }
+
+    def extract_ngrams(title: str) -> list:
+        """从标题提取有意义的 2-gram 和 3-gram"""
+        words = re.findall(r'[A-Za-z][A-Za-z0-9\-]*', title)
+        # 过滤停用词，保留有意义的词（长度>=3，首字母大写或全大写缩写）
+        filtered = [(i, w) for i, w in enumerate(words)
+                    if w.lower() not in _STOPWORDS and len(w) >= 3]
+
+        ngrams = []
+        for j in range(len(filtered)):
+            i0, w0 = filtered[j]
+            # bigram：相邻两个词（原始位置差<=2）
+            if j + 1 < len(filtered):
+                i1, w1 = filtered[j+1]
+                if i1 - i0 <= 2:
+                    ngrams.append(f"{w0} {w1}")
+            # trigram：相邻三个词（原始位置差<=4）
+            if j + 2 < len(filtered):
+                i2, w2 = filtered[j+2]
+                if i2 - i0 <= 4:
+                    ngrams.append(f"{w0} {w1} {w2}" if j+1 < len(filtered) and filtered[j+1][0]-i0<=2 else f"{w0} {w2}")
+        return ngrams
+
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT id, title, source_name, quality_score, url, fetched_at
+        FROM articles
+        WHERE fetched_at >= datetime('now', ?)
+          AND title IS NOT NULL AND title != ''
+          AND typeof(quality_score) IN ('real','integer')
+          AND quality_score >= 5.0
+        ORDER BY fetched_at DESC
+    """, (f"-{baseline_days} days",)).fetchall()
+    conn.close()
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=recent_days)
+    baseline_start = now - timedelta(days=baseline_days)
+
+    # 来源质量权重
+    _TOP_SOURCES = {
+        'Nature Medicine': 3.0, 'Nature Biomedical Engineering': 3.0,
+        'The Lancet Digital Health': 3.0, 'NEJM AI': 3.0,
+        'npj Digital Medicine': 2.5, 'JAMA Network Open': 2.5,
+        'Medical Image Analysis': 2.0, 'STAT News': 1.5,
+    }
+
+    recent_ngrams:  dict = defaultdict(lambda: {'count': 0, 'weight': 0.0, 'articles': []})
+    baseline_ngrams: dict = defaultdict(float)
+
+    for r in rows:
+        raw = r['fetched_at'] or ''
+        try:
+            t = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+
+        src_weight = _TOP_SOURCES.get(r['source_name'] or '', 1.0)
+        q = float(r['quality_score']) if r['quality_score'] else 5.0
+        weight = src_weight * (q / 7.0)
+
+        ngrams = extract_ngrams(r['title'] or '')
+        a = dict(r)
+
+        if t >= cutoff:
+            for ng in ngrams:
+                recent_ngrams[ng]['count'] += 1
+                recent_ngrams[ng]['weight'] += weight
+                if len(recent_ngrams[ng]['articles']) < 3:
+                    recent_ngrams[ng]['articles'].append(a)
+        elif t >= baseline_start:
+            for ng in ngrams:
+                baseline_ngrams[ng] += weight
+
+    # 归一化基线到14天
+    baseline_scale = recent_days / max(baseline_days - recent_days, 1)
+    results = []
+
+    for ng, data in recent_ngrams.items():
+        if data['count'] < 2:
+            continue
+        baseline_w = baseline_ngrams.get(ng, 0) * baseline_scale
+        # 突破度：recent 权重 / (baseline_rate + 平滑项)
+        # 加大对 baseline 几乎为0的词的奖励
+        breakout = data['weight'] / (baseline_w + 1.0)
+        # 额外奖励：之前完全没有出现过（真·新概念）
+        if baseline_ngrams.get(ng, 0) == 0:
+            breakout *= 2.0
+
+        results.append({
+            'concept': ng,
+            'count': data['count'],
+            'weight': round(data['weight'], 2),
+            'baseline': round(baseline_ngrams.get(ng, 0), 2),
+            'breakout_score': round(breakout, 2),
+            'is_new': baseline_ngrams.get(ng, 0) == 0,
+            'articles': data['articles'],
+            'desc': '',
+        })
+
+    results.sort(key=lambda x: x['breakout_score'], reverse=True)
+    # 过滤：去掉 breakout_score 太低的（不够新）
+    results = [r for r in results if r['breakout_score'] >= 1.5]
+    return results[:top_n]
+
+
+def explain_emerging_concepts(concepts: list,
+                               db_path: str = "corpus/corpus.db") -> list:
+    """
+    对 detect_emerging_concepts() 的结果调用 DeepSeek 生成解释，
+    缓存到 app_state['emerging_concepts']，有效期12小时。
+    """
+    import time
+    from db import get_conn
+
+    # 读缓存
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT value FROM app_state WHERE key='emerging_concepts'"
+    ).fetchone()
+    conn.close()
+
+    if row and row['value']:
+        try:
+            cached = json.loads(row['value'])
+            if time.time() - cached.get('ts', 0) < 43200:  # 12小时
+                return cached['concepts']
+        except Exception:
+            pass
+
+    if not concepts:
+        concepts = detect_emerging_concepts(db_path)
+    if not concepts:
+        return []
+
+    blocks = []
+    for i, c in enumerate(concepts[:8], 1):
+        titles = '\n'.join(f"    - {a['title']}" for a in c.get('articles', [])[:3])
+        tag = '🆕 全新概念' if c['is_new'] else '📈 快速冒头'
+        blocks.append(f"{i}. [{tag}] {c['concept']}（近14天{c['count']}篇）\n{titles}")
+
+    prompt = f"""你是医疗AI领域的科研助手。以下是近14天突然冒头的新研究概念（过去3个月几乎没人提，最近突然出现）。
+
+请为每个概念写：
+1. name_zh：中文名（3-8字，简洁准确）
+2. what：这是什么（1句话，15字以内）
+3. why_hot：为什么最近突然火（1句话，20字以内）
+4. worth：值不值得跟进，给出判断（跟/观望/不建议）和一句理由
+
+只输出JSON：
+{{"concepts": [{{"concept": "原文", "name_zh": "中文名", "what": "...", "why_hot": "...", "worth": "跟", "worth_reason": "..."}}]}}
+
+概念列表：
+{chr(10).join(blocks)}"""
+
+    try:
+        client = get_client()
+        text = chat(client, prompt, max_tokens=2000)
+        text = text.strip().removeprefix('```json').removeprefix('```').removesuffix('```').strip()
+        result = json.loads(text)
+        desc_map = {d['concept']: d for d in result.get('concepts', [])}
+        for c in concepts:
+            info = desc_map.get(c['concept'], {})
+            c['name_zh']     = info.get('name_zh', c['concept'])
+            c['what']        = info.get('what', '')
+            c['why_hot']     = info.get('why_hot', '')
+            c['worth']       = info.get('worth', '观望')
+            c['worth_reason']= info.get('worth_reason', '')
+    except Exception as e:
+        print(f"⚠ 新概念解释生成失败: {e}")
+
+    payload = json.dumps({'ts': time.time(), 'concepts': concepts}, ensure_ascii=False)
+    conn = get_conn(db_path)
+    conn.execute(
+        "INSERT OR REPLACE INTO app_state (key, value) VALUES ('emerging_concepts', ?)",
+        (payload,)
+    )
+    conn.commit()
+    conn.close()
+    return concepts
+
+
 def get_trend_history(db_path: str = "corpus/corpus.db",
                       days: int = 30, top_n: int = 8) -> dict:
     """
