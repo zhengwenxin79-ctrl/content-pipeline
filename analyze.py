@@ -704,7 +704,7 @@ def analyze_trends(db_path: str = "corpus/corpus.db",
 
 def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
                              recent_days: int = 14,
-                             baseline_days: int = 90,
+                             baseline_days: int = 60,
                              top_n: int = 10) -> list:
     """
     检测「新冒头」的研究概念：在 recent_days 内突然出现，
@@ -836,7 +836,7 @@ def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
     return results[:top_n]
 
 
-def explain_emerging_concepts(concepts: list,
+def explain_emerging_concepts(concepts: list = None,
                                db_path: str = "corpus/corpus.db") -> list:
     """
     对 detect_emerging_concepts() 的结果调用 DeepSeek 生成解释，

@@ -1930,7 +1930,7 @@ HTML = """<!DOCTYPE html>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
         <span style="font-size:14px;font-weight:700;color:#2d3748">
           ⚡ 新概念预警
-          <span style="font-size:11px;font-weight:400;color:#a0aec0;margin-left:6px">· 过去3个月几乎没有、最近14天突然冒头的研究方向</span>
+          <span style="font-size:11px;font-weight:400;color:#a0aec0;margin-left:6px">· 过去2个月几乎没有、最近14天突然冒头的研究方向</span>
         </span>
         <button onclick="loadEmerging()" style="background:none;border:none;color:#a0aec0;font-size:18px;cursor:pointer" title="刷新">⟳</button>
       </div>
