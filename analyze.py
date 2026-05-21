@@ -702,6 +702,69 @@ def analyze_trends(db_path: str = "corpus/corpus.db",
     return deduped[:top_n]
 
 
+def _check_concept_ages_openalex(concepts: list,
+                                  db_path: str = "corpus/corpus.db",
+                                  min_year: int = 2022) -> dict:
+    """
+    用 OpenAlex API 查询每个概念的最早出现年份（只查标题）。
+    返回 {concept: oldest_year or None}。
+    结果缓存在 app_state['openalex_concept_ages']，有效期30天。
+    """
+    import urllib.request, urllib.parse, time as _time
+    from db import get_conn
+
+    # 读缓存
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT value FROM app_state WHERE key='openalex_concept_ages'"
+    ).fetchone()
+    conn.close()
+
+    cache = {}
+    if row and row['value']:
+        try:
+            cache = json.loads(row['value'])
+        except Exception:
+            pass
+
+    to_query = [c for c in concepts if c not in cache]
+    updated = False
+
+    for concept in to_query:
+        try:
+            q = urllib.parse.quote('"' + concept + '"')
+            url = ("https://api.openalex.org/works"
+                   "?filter=title.search:" + q +
+                   "&sort=publication_year:asc&per_page=3"
+                   "&select=publication_year"
+                   "&mailto=medai@sugarclaw.top")
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "MedAI-Emerging/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.loads(r.read())
+            results = data.get("results", [])
+            years = [p.get("publication_year") for p in results
+                     if p.get("publication_year")]
+            cache[concept] = min(years) if years else None
+        except Exception:
+            cache[concept] = None
+        _time.sleep(0.5)
+        updated = True
+
+    if updated:
+        conn = get_conn(db_path)
+        conn.execute(
+            "INSERT OR REPLACE INTO app_state (key, value) VALUES "
+            "('openalex_concept_ages', ?)",
+            (json.dumps(cache, ensure_ascii=False),)
+        )
+        conn.commit()
+        conn.close()
+
+    return cache
+
+
 def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
                              recent_days: int = 14,
                              baseline_days: int = 60,
@@ -866,7 +929,23 @@ def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
 
     results.sort(key=lambda x: x['breakout_score'], reverse=True)
     results = [r for r in results if r['breakout_score'] >= 1.5]
-    return results[:top_n]
+    candidates = results[:top_n * 2]  # 多查一些，过滤后再取 top_n
+
+    # ── 过滤3：OpenAlex 验证概念真实年龄 ──────────────────────
+    if candidates:
+        concept_list = [r['concept'] for r in candidates]
+        ages = _check_concept_ages_openalex(concept_list, db_path)
+        filtered = []
+        for r in candidates:
+            oldest = ages.get(r['concept'])
+            r['openalex_oldest_year'] = oldest
+            # 如果 OpenAlex 能找到 2022 年前的论文 → 成熟概念，过滤
+            if oldest is not None and oldest < 2022:
+                continue
+            filtered.append(r)
+        return filtered[:top_n]
+
+    return candidates[:top_n]
 
 
 def explain_emerging_concepts(concepts: list = None,
