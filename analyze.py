@@ -751,9 +751,28 @@ def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
                     ngrams.append(f"{w0} {w1} {w2}" if j+1 < len(filtered) and filtered[j+1][0]-i0<=2 else f"{w0} {w2}")
         return ngrams
 
+    # 已成熟的经典方向，不管出现多少次都不算新概念
+    _ESTABLISHED_CONCEPTS = {
+        'neural architecture', 'architecture search', 'neural architecture search',
+        'reinforcement learning', 'transfer learning', 'meta learning',
+        'graph neural', 'attention mechanism', 'knowledge distillation',
+        'federated learning', 'contrastive learning', 'object detection',
+        'image segmentation', 'semantic segmentation', 'image classification',
+        'machine translation', 'question answering', 'named entity',
+        'sentiment analysis', 'text classification', 'speech recognition',
+        'anomaly detection', 'time series', 'graph convolution',
+        'mathematical reasoning', 'natural language processing',
+        'generative adversarial', 'variational autoencoder',
+        'recurrent neural', 'convolutional neural', 'long short',
+        'point cloud', 'knowledge graph', 'optical flow',
+        'depth estimation', 'pose estimation', 'face recognition',
+        'medical image', 'image synthesis', 'data augmentation',
+    }
+
     conn = get_conn(db_path)
     rows = conn.execute("""
-        SELECT id, title, source_name, quality_score, url, fetched_at
+        SELECT id, title, source_name, quality_score, url, fetched_at,
+               COALESCE(published_at, '') as published_at
         FROM articles
         WHERE fetched_at >= datetime('now', ?)
           AND title IS NOT NULL AND title != ''
@@ -811,11 +830,25 @@ def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
     for ng, data in recent_ngrams.items():
         if data['count'] < 2:
             continue
+
+        # ── 过滤1：成熟概念黑名单 ──────────────────────────────
+        if ng.lower() in _ESTABLISHED_CONCEPTS:
+            continue
+        if any(ec in ng.lower() for ec in _ESTABLISHED_CONCEPTS):
+            continue
+
+        # ── 过滤2：published_at 年份校验 ──────────────────────
+        # 代表论文中只要有任何一篇发表于2023年前，就认为是成熟概念
+        pub_years = []
+        for a in data['articles']:
+            pub = (a.get('published_at') or '')[:4]
+            if pub.isdigit():
+                pub_years.append(int(pub))
+        if pub_years and min(pub_years) < 2023:
+            continue
+
         baseline_w = baseline_ngrams.get(ng, 0) * baseline_scale
-        # 突破度：recent 权重 / (baseline_rate + 平滑项)
-        # 加大对 baseline 几乎为0的词的奖励
         breakout = data['weight'] / (baseline_w + 1.0)
-        # 额外奖励：之前完全没有出现过（真·新概念）
         if baseline_ngrams.get(ng, 0) == 0:
             breakout *= 2.0
 
@@ -827,11 +860,11 @@ def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
             'breakout_score': round(breakout, 2),
             'is_new': baseline_ngrams.get(ng, 0) == 0,
             'articles': data['articles'],
+            'oldest_pub': min(pub_years) if pub_years else None,
             'desc': '',
         })
 
     results.sort(key=lambda x: x['breakout_score'], reverse=True)
-    # 过滤：去掉 breakout_score 太低的（不够新）
     results = [r for r in results if r['breakout_score'] >= 1.5]
     return results[:top_n]
 
