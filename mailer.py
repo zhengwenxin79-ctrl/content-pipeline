@@ -6,6 +6,8 @@
 """
 
 import os
+import re
+import json
 import smtplib
 import base64
 from email.mime.text import MIMEText
@@ -182,8 +184,10 @@ def build_tiered_articles(sub_email: str, candidates: list,
          if 3 <= a.get("relevance_score", 0) < 7 and (a.get("quality_score") or 0) >= 7],
         key=lambda x: (x["relevance_score"], x.get("quality_score", 0)), reverse=True
     )
+    # 领域前沿：未个性化评分的文章，仅收高质量（≥8）的少量补充，避免无关内容灌满邮件
     tier3_pool = sorted(
-        [a for a in candidates if a.get("relevance_score") is None],
+        [a for a in candidates
+         if a.get("relevance_score") is None and (a.get("quality_score") or 0) >= 8],
         key=lambda x: x.get("quality_score", 0), reverse=True
     )
 
@@ -201,12 +205,13 @@ def build_tiered_articles(sub_email: str, candidates: list,
             a["tier"] = "🔭 扩展视野"
             result.append(a); seen.add(a["id"])
 
+    tier3_added = 0
     for a in tier3_pool:
-        if len(result) >= 7:
+        if len(result) >= 7 or tier3_added >= 2:
             break
         if a["id"] not in seen:
             a["tier"] = "📡 领域前沿"
-            result.append(a); seen.add(a["id"])
+            result.append(a); seen.add(a["id"]); tier3_added += 1
 
     # 兜底：如果什么都没有，返回 quality 前5
     if not result:
@@ -268,32 +273,69 @@ def _expand_keywords(kws: list) -> list:
     return list(dict.fromkeys(expanded))  # 去重保序
 
 
-def match_articles(keywords: str, days: int = 1, db_path: str = DB_PATH) -> list:
-    """从今日新抓取的文章中匹配关键词，返回匹配列表（自动扩展中文词为英文）"""
-    kws = [k.strip() for k in keywords.split(",") if k.strip()]
+def _kw_match(text: str, kw: str) -> int:
+    """词边界感知匹配（注册为 SQLite 函数）。
+    ASCII 词用 \\b 前缀锚定，避免 'ct' 命中 function/detection 这类子串误命中；
+    中文/含非 ASCII 字符的词用普通子串（中文没有词边界且无 false-friend 问题）。
+    """
+    if not text or not kw:
+        return 0
+    if kw.isascii():
+        # 短 ASCII 词（≤4，多为缩写或完整短词，如 CT/gene/DNA）要求全词边界，
+        #   避免 'gene' 命中 general、'ct' 命中 function；
+        # 长 ASCII 词（多为词干，如 imaging/segment/diagnos）只锚定前缀，
+        #   以覆盖 segmentation/diagnosis 等派生词。
+        pattern = r"\b" + re.escape(kw) + (r"\b" if len(kw) <= 4 else "")
+        return 1 if re.search(pattern, text, re.IGNORECASE) else 0
+    return 1 if kw in text else 0
+
+
+def _collect_profile_keywords(profiles: list) -> list:
+    """汇总各研究档案的 expanded_keywords（与个性化评分用的同一套词，保证候选池与打分集对齐）。"""
+    kws = []
+    for p in profiles or []:
+        try:
+            kws.extend(json.loads(p.get("expanded_keywords") or "[]"))
+        except Exception:
+            pass
+    return list(dict.fromkeys(k.strip() for k in kws if k and k.strip()))
+
+
+def match_articles(keywords: str, days: int = 1, db_path: str = DB_PATH,
+                   keyword_list: list = None) -> list:
+    """从近 days 天文章中匹配关键词，返回匹配列表。
+
+    keyword_list 优先（来自研究档案的 expanded_keywords，使候选池与个性化打分集对齐）；
+    否则用 keywords 拆分并扩展中文为英文。匹配走词边界感知的 kw_match，避免子串误命中。
+    """
+    if keyword_list:
+        kws = [k.strip() for k in keyword_list if k and k.strip()]
+    else:
+        kws = [k.strip() for k in keywords.split(",") if k.strip()]
+        kws = _expand_keywords(kws)
     if not kws:
         return []
-
-    kws = _expand_keywords(kws)
+    kws = kws[:20]
 
     conn = get_conn(db_path)
+    conn.create_function("kw_match", 2, _kw_match)
     conditions = " OR ".join(
-        ["(title LIKE ? OR content LIKE ?)"] * len(kws)
+        ["(kw_match(title, ?) OR kw_match(content, ?))"] * len(kws)
     )
-    params = []
+    # 先用便宜的日期/状态条件短路，命中近期文章才调用 kw_match
+    params = [f"-{days} days"]
     for kw in kws:
-        params += [f"%{kw}%", f"%{kw}%"]
-    params.append(f"-{days} days")
+        params += [kw, kw]
 
     rows = conn.execute(f"""
         SELECT id, title, content, source_name, url, published_at, quality_score
         FROM articles
-        WHERE ({conditions})
-          AND fetched_at >= datetime('now', ?)
+        WHERE fetched_at >= datetime('now', ?)
           AND is_processed = 1
           AND quality_score > 0
+          AND ({conditions})
         ORDER BY quality_score DESC
-        LIMIT 10
+        LIMIT 50
     """, params).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -567,15 +609,19 @@ def run_daily_push(db_path: str = DB_PATH):
         research_direction = sub.get("research_direction") or ""
         print(f"  处理: {email} | 关键词: {keywords}")
 
+        # 有研究档案时，用档案的 expanded_keywords 初筛（与个性化打分集对齐）
+        from db import get_research_profiles
+        profiles = get_research_profiles(email, db_path=db_path)
+        profile_kws = _collect_profile_keywords(profiles)
+
         # 匹配文章（初筛）
-        articles = match_articles(keywords, days=1, db_path=db_path)
+        articles = match_articles(keywords, days=1, db_path=db_path,
+                                  keyword_list=profile_kws or None)
         if not articles:
             print(f"  → 今日无匹配文章，跳过")
             continue
 
         # 分层推送（有研究档案时优先用预计算评分）
-        from db import get_research_profiles
-        profiles = get_research_profiles(email, db_path=db_path)
         if profiles:
             articles = build_tiered_articles(email, articles, db_path=db_path)
             print(f"  → 分层推送：{len(articles)} 篇")
@@ -628,13 +674,17 @@ def push_single(email: str, db_path: str = DB_PATH) -> dict:
 
     research_direction = sub.get("research_direction") or ""
 
+    # 有研究档案时，用档案的 expanded_keywords 初筛（与个性化打分集对齐）
+    from db import get_research_profiles
+    profiles = get_research_profiles(email, db_path=db_path)
+    profile_kws = _collect_profile_keywords(profiles)
+
     # 扩大到3天，避免今日文章太少
-    articles = match_articles(keywords, days=3, db_path=db_path)
+    articles = match_articles(keywords, days=3, db_path=db_path,
+                              keyword_list=profile_kws or None)
     if not articles:
         return {"ok": False, "msg": "近3天内没有匹配文章，无法推送"}
 
-    from db import get_research_profiles
-    profiles = get_research_profiles(email, db_path=db_path)
     if profiles:
         articles = build_tiered_articles(email, articles, db_path=db_path)
     elif research_direction:

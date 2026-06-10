@@ -443,22 +443,25 @@ def score_articles_for_profile(profile_id: int, direction: str,
 
     conn = get_conn(db_path)
     if keywords:
+        # 词边界感知匹配，避免 'ct' 命中 function 这类子串误命中（与 mailer 初筛同一套逻辑）
+        from mailer import _kw_match
+        conn.create_function("kw_match", 2, _kw_match)
         kw_clause = " OR ".join(
-            ["(LOWER(a.title) LIKE ? OR LOWER(a.content) LIKE ?)" for _ in keywords]
+            ["(kw_match(a.title, ?) OR kw_match(a.content, ?))" for _ in keywords]
         )
-        params = []
+        # 先用便宜条件短路（未评分 + 近期），命中才调用 kw_match
+        params = [profile_id, f"-{days} days"]
         for kw in keywords:
-            pat = f"%{kw.lower()}%"
-            params.extend([pat, pat])
-        params.extend([profile_id, f"-{days} days", limit])
+            params.extend([kw, kw])
+        params.append(limit)
         rows = conn.execute(f"""
             SELECT a.id, a.title, a.content
             FROM articles a
-            WHERE ({kw_clause})
-              AND a.id NOT IN (
+            WHERE a.id NOT IN (
                   SELECT article_id FROM user_article_relevance WHERE profile_id=?
               )
               AND a.fetched_at >= datetime('now', ?)
+              AND ({kw_clause})
             ORDER BY a.fetched_at DESC
             LIMIT ?
         """, params).fetchall()
