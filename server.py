@@ -107,6 +107,12 @@ task_status = {"running": False, "log": [], "step": ""}
 
 _SUMMARY_FAILED = "__FAILED__"       # 占位符：已尝试但失败，跳过重试
 _summary_lock = threading.Lock()     # 同一时刻只允许一个摘要生成线程
+_translate_lock = threading.Lock()   # 同一时刻只允许一个标题翻译线程（防并发/重复刷新重复翻译）
+
+
+def _is_arxiv_article(a: dict) -> bool:
+    """feed 文章字典是否来自 arXiv（source 字段存的是 source_name）。"""
+    return str(a.get("source") or "").startswith("arXiv")
 
 # ── Rate limiting ─────────────────────────────────────────────────────────────
 from collections import defaultdict as _defaultdict
@@ -1369,36 +1375,100 @@ def translate_titles(articles: list) -> dict:
         elif is_english(a["title"]):
             to_translate.append({"id": a["id"], "text": a["title"], "is_github": False})
 
-    if not to_translate:
+    if not to_translate or not DEEPSEEK_API_KEY:
         return {}
 
-    from openai import OpenAI
-    client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+    # 并发锁：防止多次刷新/并发访问对同一批标题重复翻译（之前无锁是系统 key 的隐形大头）
+    if not _translate_lock.acquire(blocking=False):
+        return {}
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
 
-    items_text = "\n".join([f'{t["id"]}|{t["text"]}' for t in to_translate])
-    prompt = f"""将以下英文文本翻译成中文，保持简洁准确，每行格式为 ID|中文翻译，只输出翻译结果，不要其他内容：
+        # 真正分批：单 prompt 全量塞 + 输出仅 1500 token 会截断，导致"译不完→反复重译"
+        BATCH = 25
+        result = {}
+        for i in range(0, len(to_translate), BATCH):
+            chunk = to_translate[i:i + BATCH]
+            items_text = "\n".join([f'{t["id"]}|{t["text"]}' for t in chunk])
+            prompt = f"""将以下英文文本翻译成中文，保持简洁准确，每行格式为 ID|中文翻译，只输出翻译结果，不要其他内容：
 
 {items_text}"""
+            try:
+                resp = client.chat.completions.create(
+                    model="deepseek-chat", timeout=90, max_tokens=1500,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                for line in resp.choices[0].message.content.strip().split("\n"):
+                    if "|" in line:
+                        parts = line.split("|", 1)
+                        try:
+                            result[int(parts[0].strip())] = parts[1].strip()
+                        except ValueError:
+                            pass
+            except Exception:
+                logging.exception("translate_titles batch %d-%d failed", i, i + BATCH)
+        return result
+    finally:
+        _translate_lock.release()
 
+
+def lazy_enrich_one(article_id: int) -> None:
+    """打开单篇文章时按需补中文标题/摘要（arXiv 不在列表页批量生成，这里懒加载）。
+    后台 best-effort：失败静默跳过，下次打开再试。仅对用户实际打开的文章花 token。"""
+    if not DEEPSEEK_API_KEY:
+        return
+    conn = get_conn(DB_PATH)
     try:
+        row = conn.execute(
+            "SELECT id, title, content, COALESCE(ai_summary,'') ai_summary, "
+            "COALESCE(title_zh,'') title_zh FROM articles WHERE id=?",
+            (article_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return
+    need_title = is_english(row["title"] or "") and not row["title_zh"]
+    need_summary = (not row["ai_summary"]) or row["ai_summary"] == _SUMMARY_FAILED
+    if not (need_title or need_summary):
+        return
+    want = []
+    if need_title:
+        want.append('"title_zh": "标题的简洁中文翻译"')
+    if need_summary:
+        want.append('"summary": "一句话(40字内)中文核心总结，直接说结论"')
+    prompt = (
+        "针对下面这篇文章，只输出 JSON：{" + ", ".join(want) + "}\n\n"
+        f"标题：{row['title']}\n内容：{(row['content'] or '')[:600]}"
+    )
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
         resp = client.chat.completions.create(
-            model="deepseek-chat",
-        timeout=90,
-            max_tokens=1500,
+            model="deepseek-chat", timeout=60, max_tokens=300,
             messages=[{"role": "user", "content": prompt}]
         )
-        lines = resp.choices[0].message.content.strip().split("\n")
-        result = {}
-        for line in lines:
-            if "|" in line:
-                parts = line.split("|", 1)
-                try:
-                    result[int(parts[0].strip())] = parts[1].strip()
-                except ValueError:
-                    pass
-        return result
+        text = resp.choices[0].message.content.strip()
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        data = json.loads(text)
     except Exception:
-        return {}
+        return
+    sets, params = [], []
+    if need_title and data.get("title_zh"):
+        sets.append("title_zh=?"); params.append(str(data["title_zh"]).strip())
+    if need_summary:
+        s = str(data.get("summary") or "").strip()
+        sets.append("ai_summary=?"); params.append(s if s else _SUMMARY_FAILED)
+    if not sets:
+        return
+    params.append(article_id)
+    conn = get_conn(DB_PATH)
+    try:
+        conn.execute(f"UPDATE articles SET {', '.join(sets)} WHERE id=?", params)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 MEDICAL_KEYWORDS = [
@@ -1472,8 +1542,10 @@ def get_digest_data(days=2):
         all_articles.append(article)
 
     # 统计需要生成摘要的文章数（排除已失败占位符，避免无限重试）
+    # arXiv 占 feed 95%+，不在列表页批量生成摘要/翻译标题（改为打开单篇时按需懒加载），大幅降低系统 key 消耗
     need_summary = [a for a in all_articles
-                    if not a.get("ai_summary") or a["ai_summary"] == _SUMMARY_FAILED]
+                    if not _is_arxiv_article(a)
+                    and (not a.get("ai_summary") or a["ai_summary"] == _SUMMARY_FAILED)]
     generating_summaries = len(need_summary) > 0 and _summary_lock.locked()
 
     # 已有缓存的先同步到 summary 字段
@@ -1482,13 +1554,13 @@ def get_digest_data(days=2):
             a["summary"] = a["ai_summary"]
 
     if generating_summaries:
-        # 后台线程异步生成剩余文章的摘要，不阻塞接口返回
+        # 后台线程异步生成剩余文章的摘要，不阻塞接口返回（仅非 arXiv，arXiv 打开单篇时懒加载）
         import threading
-        t = threading.Thread(target=generate_ai_summaries_and_cache, args=(all_articles,), daemon=True)
+        t = threading.Thread(target=generate_ai_summaries_and_cache, args=(need_summary,), daemon=True)
         t.start()
 
-    # 翻译英文标题：有缓存直接用，没缓存的后台异步翻译并存 DB
-    need_translate = [a for a in all_articles if not a.get("title_zh")]
+    # 翻译英文标题：有缓存直接用，没缓存的后台异步翻译并存 DB（arXiv 不在列表页批量翻译）
+    need_translate = [a for a in all_articles if not _is_arxiv_article(a) and not a.get("title_zh")]
     if need_translate:
         import threading as _threading
         def _do_translate(articles_to_translate):
@@ -6607,6 +6679,7 @@ class Handler(BaseHTTPRequestHandler):
                 row = conn.execute(
                     "SELECT id, title, content, source_name, url, quality_score, "
                     "COALESCE(ai_summary,'') as ai_summary, "
+                    "COALESCE(title_zh,'') as title_zh, "
                     "COALESCE(deep_analysis,'') as deep_analysis, "
                     "published_at, tags, category "
                     "FROM articles WHERE id=?",
@@ -6616,7 +6689,12 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             if not row:
                 self.send_json({"ok": False, "msg": "文章不存在"}, 404); return
-            self.send_json({"ok": True, "article": dict(row)})
+            # 按需懒加载中文标题/摘要（仅对实际打开的文章，后台执行不阻塞响应）
+            art = dict(row)
+            if (not art.get("title_zh") and is_english(art.get("title") or "")) or \
+               not art.get("ai_summary") or art.get("ai_summary") == _SUMMARY_FAILED:
+                threading.Thread(target=lazy_enrich_one, args=(article_id,), daemon=True).start()
+            self.send_json({"ok": True, "article": art})
 
         elif path == "/api/survey/analyze":
             user = _get_session(self)
