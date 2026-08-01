@@ -1,5 +1,5 @@
 """
-本地Web服务器 - 医疗AI每日情报
+本地Web服务器 - AI+X 交叉研究雷达
 运行: python server.py
 访问: http://localhost:8888
 """
@@ -148,13 +148,13 @@ ARTICLE_FOOTER = """
 
 **关注这个公众号，你会持续收到：**
 
-✅ **医疗AI前沿论文**精准拆解，只讲对转行和从业有用的部分
+✅ **AI+X 前沿论文**精准拆解，只讲对转行和从业有用的部分
 
 ✅ **AI产品经理**真实学习路径、竞品分析、避坑指南
 
 ✅ **从生物科研到产品**的转行全记录，真实不美化
 
-✅ **医疗AI行业动态**，政策、融资、落地案例一线速递
+✅ **AI+X 应用动态**，政策、融资、落地案例一线速递
 
 > 写给想用AI转行、或在医疗/生物领域做产品的你
 
@@ -215,7 +215,7 @@ def analyze_wechat_article(article_id: int) -> dict:
 
     content_preview = (row["content"] or "")[:2000]
 
-    prompt = f"""你是一个微信公众号内容分析师，专注于医疗AI方向。请深度分析以下这篇文章为什么能获得较高关注，从编辑和内容创作角度提炼可学习的经验。
+    prompt = f"""你是一个微信公众号内容分析师，专注于AI+X 交叉研究方向。请深度分析以下这篇文章为什么能获得较高关注，从编辑和内容创作角度提炼可学习的经验。
 
 文章标题：{row["title"]}
 
@@ -255,12 +255,12 @@ def analyze_wechat_article(article_id: int) -> dict:
 def _extract_key_points(client, articles_text: str) -> str:
     """素材萃取：在生成初稿前，先把原始素材压缩成结构化要点。
     这一步解决"模型逐篇复述素材"的问题，让写作聚焦于跨材料的核心洞察。"""
-    extract_prompt = f"""你是一个医疗AI领域的信息分析师。请从以下多篇素材中提取结构化要点，用于后续公众号文章写作。
+    extract_prompt = f"""你是一个AI+X 交叉研究领域的信息分析师。请从以下多篇素材中提取结构化要点，用于后续公众号文章写作。
 
 要求：
 1. 跨材料找出一个最值得写的核心发现/趋势/事件（一句话概括）
 2. 提取 3-5 个关键事实（必须有具体数字、机构名、产品名等可核实信息）
-3. 识别一个"读者会关心的决策点"（如果你是医疗AI产品经理，这意味着什么？）
+3. 识别一个"读者会关心的决策点"（如果你是AI+X 产品或研究负责人，这意味着什么？）
 4. 标注哪些信息来自哪篇素材（用【文章N】标注）
 
 素材：
@@ -275,7 +275,7 @@ def _extract_key_points(client, articles_text: str) -> str:
 ...
 
 【决策参考】
-对目标读者（医疗AI产品经理/医院信息化负责人）的具体意义
+对目标读者（AI+X 产品或研究负责人/行业数字化负责人）的具体意义
 
 【写作建议】
 推荐的文章切入角度（一句话）"""
@@ -294,8 +294,8 @@ def _extract_key_points(client, articles_text: str) -> str:
 
 def _build_draft_prompt(articles_text: str, extracted_points: str = "") -> tuple:
     """返回 (system_message, user_message) 元组，拆分角色定位和写作任务。"""
-    system_msg = """你是医疗AI公众号主编，对标「Medical AI」「丁香园」「量子位医疗」等高阅读量账号的写作水准。
-目标读者：医疗AI产品经理/产品总监、医疗科技公司决策层（创始人/BD）、医院信息化负责人——
+    system_msg = """你是跨领域科技研究公众号主编，对标「AI+X Research」「量子位」「机器之心」等高阅读量账号的写作水准。
+目标读者：AI+X 产品或研究负责人、科研工程师、创业者和行业数字化负责人——
 他们看文章是为了做决定，不是为了学知识。让他们觉得"这个信息今天就能用上"，才会转发。
 写作视角：比读者早一步看清落地坑的产品人，帮读者把事情想清楚，不是旁观者综述。
 
@@ -349,7 +349,7 @@ def _build_draft_prompt(articles_text: str, extracted_points: str = "") -> tuple
     return system_msg, user_msg
 
 def _build_review_prompt(draft: str) -> str:
-    return f"""你是独立编辑，对以下医疗AI公众号文章进行严格审核。
+    return f"""你是独立编辑，对以下跨领域科技研究公众号文章进行严格审核。
 只输出JSON批注，不要重写文章，不要输出JSON以外的任何内容。
 
 文章：
@@ -754,8 +754,8 @@ def generate_article_from_recommendation(rec_data: dict) -> dict:
 """
 
     # ── 第一轮：DeepSeek 按选题卡片生成初稿 ─────────────────
-    draft_prompt = f"""你是医疗AI公众号主编，对标「Medical AI」「量子位医疗」「丁香园」的写作水准。
-目标读者：医疗AI产品经理/产品总监、医疗科技公司决策层、医院信息化负责人——
+    draft_prompt = f"""你是跨领域科技研究公众号主编，对标「AI+X Research」「量子位」「机器之心」的写作水准。
+目标读者：AI+X 产品或研究负责人、科研工程师、创业者和行业数字化负责人——
 他们看文章是为了做决定，不是为了学知识。让他们觉得"这个信息今天就能用上"，才会转发。
 写作视角：比读者早一步看清落地坑的产品人，帮读者把事情想清楚。
 
@@ -804,7 +804,7 @@ def generate_article_from_recommendation(rec_data: dict) -> dict:
 
     # ── 第二轮：GPT-4.1 独立审核（只输出批注，不重写）────────
     gemini_client = OpenAI(api_key=GITHUB_TOKEN, base_url=GITHUB_MODELS_BASE_URL)
-    review_prompt = f"""你是独立编辑，对以下医疗AI公众号文章进行严格审核。
+    review_prompt = f"""你是独立编辑，对以下跨领域科技研究公众号文章进行严格审核。
 只输出JSON批注，不要重写文章，不要输出JSON以外的任何内容。评分要严格，不要虚高。
 
 文章：
@@ -816,7 +816,7 @@ def generate_article_from_recommendation(rec_data: dict) -> dict:
 3. 至少1条issue检查事实可信度：是否有无法核实的数据、编造的引用细节、过度夸大的结论、绝对化表述。
 4. 如有冗余段落或无新信息的句子，在cut_candidates中指出。
 5. 不要重写全文。
-6. 检查"决策价值"：目标读者（医疗AI产品经理/医院信息化负责人）读完，能得到什么具体判断或行动参考？如果全文只是"介绍了什么技术/发生了什么事"而没有"所以你应该/可以怎么做"，作为high priority issue输出。
+6. 检查"决策价值"：目标读者（AI+X 产品或研究负责人/行业数字化负责人）读完，能得到什么具体判断或行动参考？如果全文只是"介绍了什么技术/发生了什么事"而没有"所以你应该/可以怎么做"，作为high priority issue输出。
 
 输出JSON：
 ```json
@@ -989,16 +989,21 @@ def set_app_state(key: str, value: str):
     conn.close()
 
 
-def get_starred_articles() -> list:
-    conn = get_conn(DB_PATH)
-    rows = conn.execute("""
-        SELECT id, title, content, source, source_name, url, category,
-               quality_score, published_at, fetched_at, is_starred
-        FROM articles
-        WHERE is_starred = 1
-        ORDER BY fetched_at DESC
-    """).fetchall()
-    conn.close()
+def get_starred_articles(user_id: int = None) -> list:
+    if user_id:
+        from db import get_user_starred_articles
+        rows = get_user_starred_articles(user_id, DB_PATH)
+    else:
+        conn = get_conn(DB_PATH)
+        rows = conn.execute("""
+            SELECT id, title, content, source, source_name, url, category,
+                   quality_score, published_at, fetched_at, is_starred
+            FROM articles
+            WHERE is_starred = 1
+            ORDER BY fetched_at DESC
+        """).fetchall()
+        rows = [dict(r) for r in rows]
+        conn.close()
     result = []
     for r in rows:
         d = dict(r)
@@ -1009,11 +1014,16 @@ def get_starred_articles() -> list:
     return result
 
 
-def set_starred(article_id: int, starred: bool):
+def set_starred(article_id: int, starred: bool, user: dict = None):
+    if user:
+        from db import save_article_feedback
+        feedback = "star" if starred else "unstar"
+        return save_article_feedback(user["id"], user["email"], article_id, feedback, db_path=DB_PATH)
     conn = get_conn(DB_PATH)
     conn.execute("UPDATE articles SET is_starred=? WHERE id=?", (1 if starred else 0, article_id))
     conn.commit()
     conn.close()
+    return {"ok": True}
 
 
 def save_draft(title: str, content: str, draft_v1: str, draft_v2: str,
@@ -1107,11 +1117,11 @@ def get_writing_recommendations(days: int = 3, topic: str = "") -> list:
 
     topic_hint = f"\n\n⚠️ 今日关注方向：「{topic}」——请优先从文章列表中挑选与此方向相关的素材；若无相关素材则说明并推荐次优选题。" if topic else ""
 
-    prompt = f"""你是医疗AI公众号「Medical AI」风格的资深主编。以下是今天收集到的文章列表，请推荐2-3个最有传播潜力的选题。{topic_hint}
+    prompt = f"""你是「AI+X Research」风格的跨领域科技研究主编。以下是今天收集到的文章列表，请推荐2-3个最有传播潜力的选题。{topic_hint}
 
 ## 爆款选题的核心标准（优先满足）
 1. **反常识**：读者以为A，实际上是B——能让人产生"原来如此"的顿悟感
-2. **临床冲击**：直接影响医生/患者的真实场景，有紧迫感
+2. **场景冲击**：直接影响研究、工程、产品或业务决策的真实场景，有紧迫感
 3. **数据震撼**：有一个让人意外的核心数字（准确率、效率提升、成本节省）
 4. **行业决策**：医院管理者/投资人/产品经理看完会做出不同判断
 
@@ -1285,6 +1295,56 @@ def run_pipeline(topic=""):
     _recommend_cache["digest_hash"] = ""
 
 
+def _seconds_until_daily_run(run_at: str) -> float:
+    """计算距离下一次北京时间 HH:MM 的秒数。"""
+    try:
+        hour, minute = [int(x) for x in run_at.split(":", 1)]
+    except Exception:
+        hour, minute = 8, 0
+    now = datetime.now(timezone(timedelta(hours=8)))
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return max(60.0, (target - now).total_seconds())
+
+
+def run_daily_pipeline_job(trigger: str = "scheduler"):
+    """运行完整每日 pipeline：抓取、评分、个性化评分、标题、推送、趋势。"""
+    from db import start_pipeline_run, finish_pipeline_run
+    run_id = start_pipeline_run("daily", trigger, DB_PATH)
+    env = os.environ.copy()
+    env["DEEPSEEK_API_KEY"] = DEEPSEEK_API_KEY
+    python_exe = ".venv/bin/python" if os.path.exists(".venv/bin/python") else "python"
+    cmd = [python_exe, "main.py", "--db", DB_PATH, "daily"]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=os.getcwd(), env=env, timeout=60 * 60
+        )
+        log = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
+        if result.returncode == 0:
+            finish_pipeline_run(run_id, "success", "daily pipeline completed", log[-12000:], DB_PATH)
+        else:
+            finish_pipeline_run(run_id, "failed", f"exit code {result.returncode}", log[-12000:], DB_PATH)
+    except Exception as e:
+        finish_pipeline_run(run_id, "failed", str(e), "", DB_PATH)
+
+
+def schedule_daily_pipeline():
+    run_at = os.environ.get("DAILY_RUN_AT", "08:00")
+
+    def _fire():
+        threading.Thread(target=run_daily_pipeline_job, args=("scheduler",), daemon=True).start()
+        t_next = threading.Timer(_seconds_until_daily_run(run_at), _fire)
+        t_next.daemon = True
+        t_next.start()
+
+    delay = _seconds_until_daily_run(run_at)
+    t = threading.Timer(delay, _fire)
+    t.daemon = True
+    t.start()
+    print(f"✓ 每日 pipeline 调度已启用：{run_at}（北京时间）")
+
+
 def is_english(text: str) -> bool:
     """简单判断标题是否为英文（非中文字符占多数）"""
     if not text:
@@ -1314,7 +1374,7 @@ def generate_ai_summaries_and_cache(articles: list) -> None:
                     for a in batch
                 ])
                 prompt = (
-                    "你是医疗AI领域的科研助手。请为以下论文/文章各写一句话核心总结，要求：\n"
+                    "你是跨学科科研助手。请为以下论文/文章各写一句话核心总结，要求：\n"
                     "1. 40字以内\n"
                     "2. 直接说结论，不要用本文、研究者等开头\n"
                     '只输出JSON，格式：{"summaries": [{"id": 1, "summary": "一句话总结"}]}\n\n'
@@ -1436,7 +1496,8 @@ def get_digest_data(days=2):
     rows = conn.execute("""
         SELECT id, title, content, source, source_name, url, category, quality_score,
                published_at, fetched_at, COALESCE(ai_summary,'') as ai_summary,
-               COALESCE(title_zh,'') as title_zh
+               COALESCE(title_zh,'') as title_zh,
+               COALESCE(reading_brief_json,'') as reading_brief_json
         FROM articles
         WHERE fetched_at >= datetime('now', ?)
           AND typeof(quality_score) IN ('real','integer')
@@ -1468,6 +1529,11 @@ def get_digest_data(days=2):
             "date": date_display,
             "title_zh": r["title_zh"] or "",
         }
+        if r["reading_brief_json"]:
+            try:
+                article["reading_brief"] = json.loads(r["reading_brief_json"])
+            except Exception:
+                article["reading_brief"] = None
         result[cat].append(article)
         all_articles.append(article)
 
@@ -1518,7 +1584,7 @@ HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>医疗AI 每日情报</title>
+<title>AI+X 交叉研究雷达</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
@@ -1573,6 +1639,38 @@ HTML = """<!DOCTYPE html>
   .article-title a:hover { color: #667eea; }
   .article-title-zh { font-size: 13px; color: #667eea; margin-top: 3px; font-weight: 500; }
   .article-meta { font-size: 12px; color: #a0aec0; margin-top: 6px; }
+  .radar-intro { background: white; border: 1px solid #e2e8f0; border-radius: 12px;
+                 padding: 20px 22px; margin-bottom: 20px;
+                 box-shadow: 0 1px 4px rgba(0,0,0,.05); }
+  .radar-intro h2 { font-size: 21px; line-height: 1.35; margin-bottom: 8px; color: #1a202c; }
+  .radar-intro p { font-size: 14px; color: #4a5568; line-height: 1.8; max-width: 760px; }
+  .radar-points { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+                  gap:10px; margin-top:16px; }
+  .radar-point { background:#f7fafc; border:1px solid #edf2f7; border-radius:8px;
+                 padding:12px 13px; }
+  .radar-point b { display:block; font-size:13px; color:#2d3748; margin-bottom:4px; }
+  .radar-point span { font-size:12px; color:#718096; line-height:1.55; }
+  .radar-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:16px; }
+  .radar-link-btn { border:none; border-radius:8px; padding:9px 16px; font-size:13px;
+                    font-weight:700; cursor:pointer; text-decoration:none; }
+  .radar-link-primary { background:#667eea; color:white; }
+  .radar-link-secondary { background:#edf2f7; color:#4a5568; }
+  .article-brief-line { margin-top:10px; display:grid; gap:8px; }
+  .article-explain { background:#f8fafc; border:1px solid #edf2f7; border-radius:8px;
+                     padding:9px 11px; font-size:12px; color:#4a5568; line-height:1.65; }
+  .article-explain b { color:#2d3748; }
+  .priority-chip { font-size:11px; padding:2px 8px; border-radius:10px; font-weight:700;
+                   background:#fffbeb; color:#92400e; border:1px solid #fef3c7; }
+  .feedback-btn.done { opacity:.72; border-color:#cbd5e0 !important; background:#edf2f7 !important; color:#4a5568 !important; }
+  .reading-brief-panel { margin-top:12px; background:#fbfdff; border:1px solid #dbeafe;
+                         border-radius:10px; padding:14px; }
+  .brief-headline { background:#eef6ff; border-left:3px solid #3182ce; border-radius:6px;
+                    padding:10px 12px; font-size:13px; color:#2d3748; line-height:1.65;
+                    margin-bottom:12px; }
+  .brief-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+  .brief-item { background:white; border:1px solid #edf2f7; border-radius:8px; padding:10px 12px; }
+  .brief-label { font-size:11px; font-weight:700; color:#667eea; margin-bottom:5px; }
+  .brief-value { font-size:13px; color:#4a5568; line-height:1.65; white-space:pre-line; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .article-summary { font-size: 13px; color: #4a5568; margin-top: 8px;
                      line-height: 1.6; display: -webkit-box;
@@ -1868,7 +1966,7 @@ HTML = """<!DOCTYPE html>
 
 <div class="header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
   <div>
-    <h1>医疗AI 每日情报</h1>
+    <h1>AI+X 交叉研究雷达</h1>
     <p>每天追踪顶刊、arXiv 与行业动态，为科研与产业决策服务</p>
   </div>
   <div style="display:flex;align-items:center;gap:12px;flex-shrink:0">
@@ -1878,7 +1976,7 @@ HTML = """<!DOCTYPE html>
 </div>
 
 <div class="tabs">
-  <div class="tab active" id="tab-digest" onclick="switchTab('digest')">📊 今日情报</div>
+  <div class="tab active" id="tab-digest" onclick="switchTab('digest')">📊 今日推荐</div>
   <div class="tab" id="tab-starred" onclick="switchTab('starred')">⭐ 收藏</div>
   <div class="tab" id="tab-myfeeds" onclick="switchTab('myfeeds')">📡 自定义订阅</div>
   <div class="tab" id="tab-subscribe" onclick="switchTab('subscribe')">📬 邮件推送</div>
@@ -1919,6 +2017,23 @@ HTML = """<!DOCTYPE html>
 
 <div class="page active" id="page-digest">
   <div class="main">
+    <div class="radar-intro">
+      <h2>AI+X 交叉研究雷达：每天帮你挑出 5-10 篇真正值得读的论文和项目</h2>
+      <p>
+        输入你的研究方向，系统会从顶刊、arXiv、开源项目和行业信号里筛选高价值内容，
+        给出个人匹配度、推荐理由、跨领域迁移价值，并生成中文结构化阅读卡片。
+      </p>
+      <div class="radar-points">
+        <div class="radar-point"><b>研究方向驱动</b><span>用自然语言描述课题，自动展开关键词、核心方法和邻近方法。</span></div>
+        <div class="radar-point"><b>少而准的每日推荐</b><span>优先展示高质量、高匹配、可迁移的 5-10 篇内容。</span></div>
+        <div class="radar-point"><b>中文阅读 brief</b><span>快速看到研究问题、方法、结果、数据集、代码、局限和阅读建议。</span></div>
+        <div class="radar-point"><b>反馈持续校准</b><span>通过收藏、有用、不相关、已读，让后续推荐更贴近你的方向。</span></div>
+      </div>
+      <div class="radar-actions">
+        <button class="radar-link-btn radar-link-primary" onclick="_currentUser ? switchTab('subscribe') : openAuthModal('register')">注册/登录并填写方向</button>
+        <button class="radar-link-btn radar-link-secondary" onclick="showOnboardingModal()">快速添加研究方向</button>
+      </div>
+    </div>
     <div id="summaryGeneratingBanner" style="display:none;align-items:center;gap:10px;background:#fffbeb;border:1px solid #f6e05e;border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:13px;color:#744210">
       <div style="width:16px;height:16px;border:2px solid #f6ad55;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0"></div>
       <span>AI 正在生成摘要…</span>
@@ -2196,7 +2311,7 @@ HTML = """<!DOCTYPE html>
     <div id="subLoginHint" style="display:none;text-align:center;padding:64px 0;color:#a0aec0">
       <div style="font-size:40px;margin-bottom:12px">📬</div>
       <div style="font-size:16px;font-weight:600;color:#4a5568;margin-bottom:8px">登录后设置关键词订阅</div>
-      <div style="font-size:13px;margin-bottom:24px">每日从抓取的医疗AI文章中自动筛选，推送到你的邮箱</div>
+      <div style="font-size:13px;margin-bottom:24px">每日从抓取的 AI+X 论文、项目和应用信号中自动筛选，推送到你的邮箱</div>
       <button onclick="openAuthModal('login')"
         style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;padding:10px 28px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
         登录 / 注册
@@ -2546,7 +2661,7 @@ async function _pollSummaries() {
     const data = await res.json();
     const digest = data.digest || {};
     // 原地更新各分类文章的摘要
-    ['top_journals','big_groups','commercial','open_source','未分类'].forEach(sec => {
+    ['顶刊论文','大组动态','商业落地','开源项目','未分类'].forEach(sec => {
       (digest[sec] || []).forEach(a => {
         const el = document.getElementById('summary-' + a.id);
         if (!el) return;
@@ -2670,7 +2785,7 @@ async function clickTopicCard(name) {
   // 更新卡片样式
   renderTopicCards(
     Array.from(document.querySelectorAll('#topicCards button')).map(b => ({
-      name: b.textContent.replace(/^✓\s*/, '').replace(/·\d+$/, '').trim(),
+      name: b.textContent.replace(/^✓\\s*/, '').replace(/·\\d+$/, '').trim(),
       count: parseInt(b.querySelector('span')?.textContent?.replace('·','') || '0')
     })),
     _subscribedDomains
@@ -3054,7 +3169,7 @@ async function renderStreamGraph() {
     const tPath = bezierPath(topPts);
     const bPath = bezierPath(botPts);
     const close = `L ${botPts[0][0].toFixed(1)} ${botPts[0][1].toFixed(1)}`;
-    const d = `${tPath} ${close} ${bPath.replace(/^M[\d\.\s]+/, 'L ')} Z`;
+    const d = `${tPath} ${close} ${bPath.replace(/^M[\\d\\.\\s]+/, 'L ')} Z`;
     svgHtml += `<path d="${d}" fill="${color}" fill-opacity="0.82"
       stroke="white" stroke-width="0.8" stroke-opacity="0.5"
       style="cursor:pointer;transition:fill-opacity .2s"
@@ -3126,7 +3241,7 @@ function streamLeave() {
 function renderStats(s) {
   document.getElementById('statsRow').innerHTML = `
     <div class="stat-card"><div class="num">${s.today || 0}</div><div class="label">今日新增</div></div>
-    <div class="stat-card"><div class="num">${s.medical || s.articles}</div><div class="label">医疗相关文章</div></div>
+    <div class="stat-card"><div class="num">${s.medical || s.articles}</div><div class="label">AI+X 候选文章</div></div>
     <div class="stat-card"><div class="num">${s.sources || '—'}</div><div class="label">覆盖来源</div></div>
   `;
 }
@@ -3135,6 +3250,114 @@ function scoreColor(s) {
   if (s >= 8) return '#48bb78';
   if (s >= 6) return '#ed8936';
   return '#a0aec0';
+}
+
+function findDigestArticle(id) {
+  if (!_digestData) return null;
+  for (const articles of Object.values(_digestData)) {
+    if (!Array.isArray(articles)) continue;
+    const found = articles.find(a => a.id === id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function priorityForArticle(a) {
+  const rel = Number(a.relevance_score || 0);
+  const score = Number(a.score || 0);
+  if (rel >= 8 || score >= 8.5) return '精读';
+  if (rel >= 6 || score >= 7) return '略读';
+  if (score >= 6) return '收藏备用';
+  return '跳过';
+}
+
+function inferTransferValue(a) {
+  const tags = (a.domain_tags || []).slice(0, 2).join('、');
+  if (a.relevance_reason) return `可从 ${tags || '相邻 AI+X 场景'} 借鉴问题定义、方法组合或评估思路。`;
+  if (tags) return `可作为 ${tags} 方向的相邻案例，重点看方法是否能迁移到你的数据和任务。`;
+  return '重点看其方法、数据构造或评估指标是否能迁移到你的交叉研究场景。';
+}
+
+function renderReadingBrief(brief) {
+  if (!brief) return '';
+  const fields = [
+    ['研究问题', 'research_problem'],
+    ['方法/系统', 'method'],
+    ['关键结果', 'key_results'],
+    ['数据集', 'datasets'],
+    ['代码/模型', 'code_or_artifact'],
+    ['与我方向关系', 'relation_to_user'],
+    ['迁移价值', 'transfer_value'],
+    ['局限', 'limitations'],
+    ['阅读建议', 'reading_priority'],
+    ['估计时间', 'estimated_reading_time'],
+  ];
+  const tags = Array.isArray(brief.tags) && brief.tags.length
+    ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">${brief.tags.map(t => `<span class="badge">${escHtml(t)}</span>`).join('')}</div>`
+    : '';
+  return `
+    <div class="brief-headline"><b>一句话结论：</b>${escHtml(brief.one_sentence || '未说明')}</div>
+    <div class="brief-grid">
+      ${fields.map(([label, key]) => `
+        <div class="brief-item">
+          <div class="brief-label">${label}</div>
+          <div class="brief-value">${escHtml(brief[key] || '未说明')}</div>
+        </div>`).join('')}
+    </div>
+    ${tags}`;
+}
+
+async function toggleReadingBrief(id) {
+  const panel = document.getElementById('brief-' + id);
+  const btn = document.getElementById('btn-brief-' + id);
+  if (!panel || !btn) return;
+
+  if (panel.style.display !== 'none') {
+    panel.style.display = 'none';
+    btn.textContent = '阅读 brief';
+    return;
+  }
+
+  if (panel.dataset.loaded) {
+    panel.style.display = 'block';
+    btn.textContent = '收起 brief';
+    return;
+  }
+
+  const article = findDigestArticle(id);
+  if (article && article.reading_brief) {
+    panel.innerHTML = renderReadingBrief(article.reading_brief);
+    panel.dataset.loaded = '1';
+    panel.style.display = 'block';
+    btn.textContent = '收起 brief';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '生成中...';
+  panel.style.display = 'block';
+  panel.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:#718096;font-size:13px">
+    <div style="width:16px;height:16px;border:2px solid #667eea;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0"></div>
+    正在生成中文结构化阅读卡片...
+  </div>`;
+  try {
+    const res = await fetch('/api/article/reading-brief?id=' + id);
+    const data = await res.json();
+    if (!data.ok) {
+      panel.innerHTML = `<div style="color:#c53030;font-size:13px;background:#fff5f5;border-radius:8px;padding:10px 12px">${escHtml(data.msg || '生成失败')}</div>`;
+      btn.textContent = '阅读 brief';
+      return;
+    }
+    panel.innerHTML = renderReadingBrief(data.brief);
+    panel.dataset.loaded = '1';
+    if (article) article.reading_brief = data.brief;
+    btn.textContent = '收起 brief';
+  } catch(e) {
+    panel.innerHTML = `<div style="color:#c53030;font-size:13px;background:#fff5f5;border-radius:8px;padding:10px 12px">请求失败：${escHtml(e.message)}</div>`;
+    btn.textContent = '阅读 brief';
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function _articleMatchesFilter(a) {
@@ -3173,9 +3396,19 @@ function renderDigest(digest) {
       </div>
       <div class="articles">`;
     for (const a of items) {
-      const link = a.url ? `<a href="${a.url}" target="_blank">${a.title}</a>` : a.title;
-      const zhLine = a.title_zh ? `<div class="article-title-zh">🔤 ${a.title_zh}</div>` : '';
+      const safeUrl = escHtml(a.url || '');
+      const titleZh = a.title_zh || (/[一-鿿]/.test(a.title || '') ? a.title : '');
+      const displayTitle = titleZh || a.title;
+      const originalTitle = titleZh && titleZh !== a.title ? a.title : '';
+      const link = safeUrl ? `<a href="${safeUrl}" target="_blank">${escHtml(displayTitle)}</a>` : escHtml(displayTitle);
+      const originalLine = originalTitle ? `<div class="article-title-zh" style="color:#718096;font-weight:400">原标题：${escHtml(originalTitle)}</div>` : '';
       const datePart = a.date ? ` · ${a.date}` : '';
+      const brief = a.reading_brief || {};
+      const matchScore = Number(a.relevance_score || 0);
+      const matchText = matchScore ? `${matchScore.toFixed(1)}/10` : '待画像匹配';
+      const recommendReason = a.relevance_reason || brief.relation_to_user || a.summary || '高质量 AI+X 候选，建议结合你的研究方向快速判断。';
+      const transferValue = brief.transfer_value || inferTransferValue(a);
+      const priority = brief.reading_priority || priorityForArticle(a);
       // 相关性徽章
       const relBadge = (a.relevance_score >= 6)
         ? `<span title="${escHtml(a.relevance_reason||'')}"
@@ -3191,6 +3424,8 @@ function renderDigest(digest) {
                     background:#ebf8ff;color:#2b6cb0;cursor:pointer;white-space:nowrap">
              ${escHtml(domainTag)}
            </span>` : '';
+      const starText = a.is_starred ? '★' : '☆';
+      const starStyle = a.is_starred ? 'opacity:1;color:#f6ad55' : 'opacity:0.4';
       html += `<div class="article-card ${sec.cls}" id="acard-${a.id}">
         <div class="article-select-wrap">
           <input type="checkbox" id="chk-${a.id}" value="${a.id}" onchange="onArticleCheck(${a.id}, this.checked)">
@@ -3199,32 +3434,50 @@ function renderDigest(digest) {
               <div class="article-title" style="flex:1">${link}</div>
               <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
                 ${relBadge}
-                <button class="star-btn" id="star-${a.id}" onclick="toggleStar(${a.id})" title="收藏"
-                  style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;opacity:0.4"
+                <button class="star-btn" id="star-${a.id}" data-starred="${a.is_starred ? '1' : ''}" onclick="toggleStar(${a.id})" title="收藏"
+                  style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;${starStyle}"
                   onmouseover="this.style.opacity=1"
-                  onmouseout="if(!this.dataset.starred)this.style.opacity=0.4">☆</button>
+                  onmouseout="if(!this.dataset.starred)this.style.opacity=0.4">${starText}</button>
               </div>
             </div>
-            ${zhLine}
+            ${originalLine}
             <div class="article-meta" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
               <span class="score-dot" style="background:${scoreColor(a.score)}"></span>
-              ${(parseFloat(a.score)||0).toFixed(1)}分 · ${a.source}${datePart}
+              来源：${escHtml(a.source || '未知')} · ${a.date || '日期未知'} · 质量分 ${(parseFloat(a.score)||0).toFixed(1)}
+              <span style="color:#553c9a">个人匹配度 ${matchText}</span>
+              <span class="priority-chip">${escHtml(priority)}</span>
               ${domainBadge}
             </div>
-            <div class="article-summary" id="summary-${a.id}" style="${a.summary ? '' : 'display:none'}">${a.summary || ''}</div>
+            <div class="article-summary" id="summary-${a.id}" style="${a.summary ? '' : 'display:none'}">${escHtml(a.summary || '')}</div>
+            <div class="article-brief-line">
+              <div class="article-explain"><b>推荐理由：</b>${escHtml(recommendReason)}</div>
+              <div class="article-explain"><b>迁移价值：</b>${escHtml(transferValue)}</div>
+            </div>
             <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <button onclick="toggleDeepAnalysis(${a.id})" id="btn-analyze-${a.id}"
+              <button onclick="toggleReadingBrief(${a.id})" id="btn-brief-${a.id}"
                 style="font-size:12px;color:#667eea;background:#f0f4ff;border:1px solid #c3dafe;
                        padding:4px 12px;border-radius:12px;cursor:pointer;font-weight:500">
-                🔬 深度分析
+                阅读 brief
+              </button>
+              <button onclick="toggleDeepAnalysis(${a.id})" id="btn-analyze-${a.id}"
+                style="font-size:12px;color:#4a5568;background:#f7fafc;border:1px solid #e2e8f0;
+                       padding:4px 12px;border-radius:12px;cursor:pointer;font-weight:500">
+                深度分析
               </button>
               <button class="anim-btn" id="anim-btn-${a.id}"
-                data-url="${a.url ? escHtml(a.url) : ''}"
+                data-url="${safeUrl}"
                 onclick="toggleAnimation(${a.id})">
-                🎬 动画解析
+                动画解析
               </button>
-              ${a.url ? `<a href="${a.url}" target="_blank" style="font-size:12px;color:#a0aec0;text-decoration:none">查看原文 →</a>` : ''}
+              <button class="${(a.feedback||[]).includes('useful') ? 'feedback-btn done' : 'feedback-btn'}" onclick="sendArticleFeedback(${a.id}, 'useful', this)" title="这篇推荐有用"
+                style="font-size:12px;color:#276749;background:#f0fff4;border:1px solid #c6f6d5;padding:4px 10px;border-radius:12px;cursor:pointer">有用</button>
+              <button class="${(a.feedback||[]).includes('irrelevant') ? 'feedback-btn done' : 'feedback-btn'}" onclick="sendArticleFeedback(${a.id}, 'irrelevant', this)" title="这篇和我方向不相关"
+                style="font-size:12px;color:#9b2c2c;background:#fff5f5;border:1px solid #fed7d7;padding:4px 10px;border-radius:12px;cursor:pointer">不相关</button>
+              <button class="${(a.feedback||[]).includes('read') ? 'feedback-btn done' : 'feedback-btn'}" onclick="sendArticleFeedback(${a.id}, 'read', this)" title="标记已读"
+                style="font-size:12px;color:#4a5568;background:#f7fafc;border:1px solid #e2e8f0;padding:4px 10px;border-radius:12px;cursor:pointer">已读</button>
+              ${safeUrl ? `<a href="${safeUrl}" target="_blank" style="font-size:12px;color:#a0aec0;text-decoration:none">查看原文 →</a>` : ''}
             </div>
+            <div class="reading-brief-panel" id="brief-${a.id}" style="display:none"></div>
             <div id="deep-${a.id}" style="display:none;margin-top:12px"></div>
             <div class="anim-panel" id="anim-panel-${a.id}" style="display:none"></div>
           </div>
@@ -3236,7 +3489,9 @@ function renderDigest(digest) {
   if (!hasAny) {
     const filterMsg = _feedFilter !== 'all' || _activeTopic
       ? `当前过滤条件下没有文章，<a href="javascript:setFeedFilter('all')" style="color:#667eea">查看全部</a>`
-      : `今日情报暂未更新，每天 07:00 自动推送${_currentUser?.is_admin ? '，或点击「一键更新情报」立即抓取' : '，请稍后再来'}`;
+      : (_currentUser
+        ? `暂时没有可推荐文章。可以先添加/细化研究方向，或等待每日任务更新${_currentUser?.is_admin ? '，管理员也可以点击「更新情报」手动刷新' : ''}。`
+        : `暂时没有可推荐文章。注册/登录并填写研究方向后，系统会按你的方向生成每日 5-10 篇推荐。`);
     html = `<div class="empty"><div style="font-size:48px">📭</div><p>${filterMsg}</p></div>`;
   }
   document.getElementById('content').innerHTML = html;
@@ -3244,6 +3499,7 @@ function renderDigest(digest) {
 
 // ── Onboarding & Banner ───────────────────────────────────
 function showOnboardingModal() {
+  if (!_currentUser) { openAuthModal('register'); return; }
   document.getElementById('noProfileBanner').style.display = 'none';
   document.getElementById('onboardingModal').style.display = 'flex';
   document.getElementById('onboardingDirection').focus();
@@ -4246,6 +4502,25 @@ async function toggleStar(id) {
   btn.style.color = newVal ? '#f6ad55' : '';
 }
 
+async function sendArticleFeedback(id, feedback, btn) {
+  if (!requireLogin()) return;
+  const oldText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '已记录';
+  try {
+    await fetch('/api/article/feedback', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({article_id: id, feedback})
+    });
+    btn.style.opacity = '0.7';
+  } catch(e) {
+    btn.textContent = oldText;
+  } finally {
+    setTimeout(() => { btn.disabled = false; }, 800);
+  }
+}
+
 // ── 收藏页 ────────────────────────────────────────────
 let starSelected = new Set();
 
@@ -4277,7 +4552,7 @@ async function loadStarred() {
             ${(a.score||0).toFixed(1)}分 · ${a.source_name || a.source}${datePart}
             ${a.category ? ' · ' + a.category : ''}
           </div>
-          ${a.summary ? `<div class="article-summary">${a.summary}</div>` : ''}
+          ${a.summary ? `<div class="article-summary">${escHtml(a.summary)}</div>` : ''}
         </div>
       </div>
     </div>`;
@@ -4365,10 +4640,10 @@ async function loadWechatArticles() {
         ${a.quality_score ? ' · 评分 ' + a.quality_score.toFixed(1) : ''}
         ${a.fetched_at ? ' · ' + a.fetched_at.slice(0,10) : ''}
       </div>
-      ${a.content ? `<div class="article-summary" style="margin-top:8px">${a.content.slice(0,100)}</div>` : ''}
+      ${a.content ? `<div class="article-summary" style="margin-top:8px">${escHtml(a.content.slice(0,100))}</div>` : ''}
       <div style="display:flex;gap:8px;margin-top:12px;align-items:center">
         ${a.url ? `<a href="${a.url}" target="_blank" style="font-size:12px;color:#667eea">原文 ↗</a>` : ''}
-        <button class="wx-card-btn" id="btn-${a.id}" onclick="showAnalysis(${a.id}, '${a.title.replace(/'/g,"\\'")}')">🔍 深度分析</button>
+        <button class="wx-card-btn" id="btn-${a.id}" data-title="${escHtml(a.title)}" onclick="showAnalysis(${a.id}, this.dataset.title)">🔍 深度分析</button>
       </div>
     </div>
   `).join('');
@@ -4555,7 +4830,12 @@ function showGenModal(loadingMsg, data) {
 }
 
 function escHtml(str) {
-  return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(str || '')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
 }
 
 function closeGenModal(event) {
@@ -5123,6 +5403,7 @@ async function loadSubscriptions() {
     formTitle.textContent = '选择推送领域，开启每日推送';
     cancelBtn.style.display = 'none';
     testBtn.style.display = 'none';
+    renderProfiles(data.profiles || []);
     renderSubTags('');
   }
 }
@@ -5304,29 +5585,59 @@ function showApiKeyMsg(msg, ok) {
 // ── 研究档案管理 ─────────────────────────────────────────────
 let _profiles = [];
 
+function _profileTags(values, emptyText) {
+  const arr = Array.isArray(values) ? values.filter(Boolean).slice(0, 8) : [];
+  if (!arr.length) return `<span style="font-size:12px;color:#a0aec0">${emptyText}</span>`;
+  return arr.map(v => `<span style="font-size:11px;background:white;border:1px solid #e9d8fd;color:#553c9a;border-radius:12px;padding:3px 8px">${escHtml(v)}</span>`).join('');
+}
+
 function renderProfiles(profiles) {
   _profiles = profiles;
   const list = document.getElementById('profileList');
   if (!list) return;
   if (!profiles.length) {
-    list.innerHTML = '<div style="font-size:13px;color:#a0aec0;padding:8px 0">暂无研究方向，点击「添加方向」开始设置</div>';
+    list.innerHTML = `<div style="font-size:13px;color:#718096;background:#f7fafc;border:1px dashed #cbd5e0;border-radius:10px;padding:14px">
+      还没有研究方向。添加后系统会生成结构化画像，并按画像为文章打个人匹配度。
+    </div>`;
     return;
   }
   list.innerHTML = profiles.map(p => {
-    const kws = (p.expanded_keywords || []).slice(0, 5).join(' · ');
+    const pj = p.profile_json || {};
+    const summary = pj.profile_summary || '';
+    const coreMethods = pj.core_methods || [];
+    const adjacentMethods = pj.adjacent_methods || [];
+    const applications = pj.application_domains || [];
     return `
     <div style="background:#faf5ff;border:1.5px solid #d6bcfa;border-radius:10px;padding:12px 14px;position:relative">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
         <div style="flex:1">
           <div style="font-size:13px;font-weight:700;color:#553c9a;margin-bottom:4px">${escHtml(p.name)}</div>
           <div style="font-size:13px;color:#4a5568;line-height:1.5">${escHtml(p.direction)}</div>
-          ${kws ? `<div style="font-size:11px;color:#a0aec0;margin-top:5px">🔍 ${escHtml(kws)}${p.expanded_keywords.length > 5 ? ' ...' : ''}</div>` : ''}
+          ${summary ? `<div style="font-size:12px;color:#2d3748;line-height:1.6;background:white;border-radius:8px;padding:8px 10px;margin-top:8px"><b>画像摘要：</b>${escHtml(summary)}</div>` : ''}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
           <button onclick="editProfile(${p.id})"
             style="background:none;border:1px solid #d6bcfa;color:#6b46c1;padding:4px 10px;border-radius:6px;font-size:12px;cursor:pointer">编辑</button>
           <button onclick="deleteProfile(${p.id})"
             style="background:none;border:1px solid #fed7d7;color:#e53e3e;padding:4px 10px;border-radius:6px;font-size:12px;cursor:pointer">删除</button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:10px">
+        <div style="background:#f8f5ff;border-radius:8px;padding:8px">
+          <div style="font-size:11px;font-weight:700;color:#805ad5;margin-bottom:6px">Expanded keywords</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap">${_profileTags(p.expanded_keywords, '保存后自动展开')}</div>
+        </div>
+        <div style="background:#f8f5ff;border-radius:8px;padding:8px">
+          <div style="font-size:11px;font-weight:700;color:#805ad5;margin-bottom:6px">Core methods</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap">${_profileTags(coreMethods, '暂无')}</div>
+        </div>
+        <div style="background:#f8f5ff;border-radius:8px;padding:8px">
+          <div style="font-size:11px;font-weight:700;color:#805ad5;margin-bottom:6px">Adjacent methods</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap">${_profileTags(adjacentMethods, '暂无')}</div>
+        </div>
+        <div style="background:#f8f5ff;border-radius:8px;padding:8px">
+          <div style="font-size:11px;font-weight:700;color:#805ad5;margin-bottom:6px">Application domains</div>
+          <div style="display:flex;gap:5px;flex-wrap:wrap">${_profileTags(applications, '暂无')}</div>
         </div>
       </div>
     </div>`;
@@ -5349,7 +5660,11 @@ function editProfile(id) {
   document.getElementById('profileDirection').value = p.direction;
   const hint = document.getElementById('profileExpandedHint');
   if (p.expanded_keywords && p.expanded_keywords.length) {
-    hint.textContent = '🔍 当前关键词：' + p.expanded_keywords.join(', ');
+    const pj = p.profile_json || {};
+    const methods = (pj.core_methods || []).slice(0, 5).join(', ');
+    hint.textContent = '当前画像：' + (pj.profile_summary || '已展开关键词') +
+      (methods ? ' | Core methods: ' + methods : '') +
+      ' | Expanded keywords: ' + p.expanded_keywords.slice(0, 8).join(', ');
     hint.style.display = 'block';
   } else {
     hint.style.display = 'none';
@@ -5389,7 +5704,7 @@ async function saveProfile() {
   if (!data.ok && data.ok !== undefined) { hint.textContent = '❌ ' + (data.msg || '保存失败'); return; }
 
   if (data.expanded_keywords && data.expanded_keywords.length) {
-    hint.textContent = '✅ 关键词：' + data.expanded_keywords.join(', ');
+    hint.textContent = '已生成画像和关键词：' + data.expanded_keywords.slice(0, 8).join(', ');
   }
   cancelProfileForm();
   const subRes = await fetch('/api/subscribe/me');
@@ -5584,19 +5899,12 @@ function setLayoutMode(el, v) {
   document.querySelectorAll('.layout-chip').forEach(x => x.classList.remove('on'));
   el.classList.add('on'); _layoutMode = v;
 }
-// 自动从服务器获取 DeepSeek Key
+// 不从服务器下发私钥；如需排版 AI 能力，使用用户本地保存的 key。
 (async function() {
   try {
-    const res = await fetch('/api/config');
-    const data = await res.json();
-    if (data.deepseek_key) {
-      window._dsKey = data.deepseek_key;
-      const wrap = document.getElementById('layoutKeyWrap');
-      if (wrap) wrap.style.display = 'none';
-    }
-  } catch(e) {
     const saved = localStorage.getItem('ds_layout_key');
     if (saved) { document.getElementById('layoutApiKey').value = saved; window._dsKey = saved; }
+  } catch(e) {
   }
 })();
 </script>
@@ -5805,7 +6113,7 @@ async function loadAIAnalysis() {
     }
     // 将 markdown 加粗转为 HTML
     const html = data.analysis
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')
       .split('\\n\\n').join('</p><p>')
       .split('\\n').join('<br>');
     container.innerHTML = `
@@ -5917,7 +6225,7 @@ SURVEY_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>医疗AI前沿资讯获取习惯调研</title>
+<title>AI+X 交叉研究前沿资讯获取习惯调研</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
@@ -5966,7 +6274,7 @@ textarea:focus { border-color: #667eea; }
 </head>
 <body>
 <div class="header">
-  <h1>📋 医疗 AI 前沿资讯获取习惯调研</h1>
+  <h1>📋 AI+X 交叉研究前沿资讯获取习惯调研</h1>
   <p>约 4 分钟完成 · 共 15 题 · 帮助我们做得更适合你</p>
 </div>
 <div class="main">
@@ -5980,7 +6288,7 @@ textarea:focus { border-color: #667eea; }
 
   <div class="card" id="q1">
     <div class="q-num">Q1 / 15</div>
-    <div class="q-text">您上一次主动去搜索或阅读医疗AI领域前沿论文，是在什么时候？<span class="required">*</span></div>
+    <div class="q-text">您上一次主动去搜索或阅读AI+X 交叉研究领域前沿论文，是在什么时候？<span class="required">*</span></div>
     <div class="options" id="opts_q1">
       <div class="opt" onclick="selectOpt(this,'q1','就在这两天')"><input type="radio"><label>就在这两天（日常习惯）</label></div>
       <div class="opt" onclick="selectOpt(this,'q1','上周')"><input type="radio"><label>上周（保持较低频率的关注）</label></div>
@@ -5991,7 +6299,7 @@ textarea:focus { border-color: #667eea; }
 
   <div class="card" id="q2">
     <div class="q-num">Q2 / 15</div>
-    <div class="q-text">您目前获取医疗AI最新研究成果的主要渠道是？<span class="required">*</span></div>
+    <div class="q-text">您目前获取 AI+X 交叉研究最新成果的主要渠道是？<span class="required">*</span></div>
     <div class="q-hint">可多选</div>
     <div class="options" id="opts_q2">
       <div class="opt" onclick="toggleCheck(this,'q2','主动检索')"><input type="checkbox"><label>主动检索（Google Scholar、PubMed、arXiv 等）</label></div>
@@ -6059,7 +6367,7 @@ textarea:focus { border-color: #667eea; }
 
   <div class="card" id="q7">
     <div class="q-num">Q7 / 15</div>
-    <div class="q-text">假设有一份提炼好的每日"医疗AI前沿速递"，您在什么场景下最有可能点开？<span class="required">*</span></div>
+    <div class="q-text">假设有一份提炼好的每日"AI+X 交叉研究前沿速递"，您在什么场景下最有可能点开？<span class="required">*</span></div>
     <div class="options" id="opts_q7">
       <div class="opt" onclick="selectOpt(this,'q7','早上通勤/吃饭')"><input type="radio"><label>早上通勤或吃早餐时，在手机上快速浏览</label></div>
       <div class="opt" onclick="selectOpt(this,'q7','到工位打开电脑')"><input type="radio"><label>刚到实验室/工位，打开电脑邮箱顺手处理</label></div>
@@ -6361,7 +6669,7 @@ STUDIO_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>创作工具 · 医疗AI</title>
+<title>创作工具 · AI+X</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
@@ -6564,15 +6872,17 @@ class Handler(BaseHTTPRequestHandler):
             content = (row["content"] or "")[:3000]
             source = row["source_name"] or ""
             prompt = (
-                "你是医疗AI领域的科研助手，请对以下论文进行深度分析，输出结构化中文报告（总计300-500字）。\n\n"
-                "严格按以下7个维度输出，每个维度一段，用emoji标题开头：\n"
-                "🔬 核心问题：这篇文章在解决什么临床/科研问题？\n"
-                "⚡ 方法创新：提出了什么新方法、新架构或新思路？\n"
-                "📊 关键结果：最重要的实验数字、指标对比、性能提升？\n"
-                "🗄️ 数据集：使用了哪些数据集？规模多大？是否公开可用？\n"
-                "💻 代码/模型：是否开源？有无 GitHub 链接或预训练权重？\n"
-                "💡 价值判断：对 AI 工程师或临床研究者的实际价值是什么？\n"
-                "⚠️ 局限性：有什么明显缺陷、未解决的问题或适用范围限制？\n\n"
+                "你是跨学科科研阅读助手，请对以下论文/项目进行深度分析，输出结构化中文报告（总计350-650字）。\n\n"
+                "严格按以下9个维度输出，每个维度一段，用emoji标题开头：\n"
+                "🔬 核心问题：这篇内容在解决什么研究/工程/应用问题？\n"
+                "⚡ 方法创新：提出了什么新方法、新架构、新系统或新思路？\n"
+                "📊 关键结果：最重要的实验数字、指标对比、性能提升或证据？没有就写未说明。\n"
+                "🗄️ 数据集：使用了哪些数据集、实验对象或评估场景？是否公开可用？\n"
+                "💻 代码/模型：是否开源？有无 GitHub、模型权重、工具或数据链接？\n"
+                "🧭 跨领域价值：它能给哪些 AI+X 场景带来迁移启发？\n"
+                "🎯 阅读建议：精读/略读/收藏备用/跳过，并说明理由。\n"
+                "💡 价值判断：对研究者、工程师或产品负责人有什么实际判断价值？\n"
+                "⚠️ 局限性：有什么明显缺陷、证据不足、适用范围限制或落地风险？\n\n"
                 f"论文来源：{source}\n"
                 f"标题：{title}\n"
                 f"内容：{content}"
@@ -6593,6 +6903,102 @@ class Handler(BaseHTTPRequestHandler):
                 finally:
                     conn.close()
                 self.send_json({"ok": True, "analysis": analysis, "cached": False})
+            except Exception as e:
+                self.send_json({"ok": False, "msg": _friendly_api_error(e)})
+
+        elif path == "/api/article/reading-brief":
+            qs = parse_qs(urlparse(self.path).query)
+            article_id = qs.get("id", [""])[0]
+            if not article_id:
+                self.send_json({"ok": False, "msg": "缺少 id 参数"}, 400); return
+            try:
+                article_id = int(article_id)
+            except ValueError:
+                self.send_json({"ok": False, "msg": "id 格式错误"}, 400); return
+
+            user = _get_session(self)
+            conn = get_conn(DB_PATH)
+            try:
+                row = conn.execute(
+                    "SELECT id, title, content, source_name, url, quality_score, "
+                    "COALESCE(reading_brief_json,'') as reading_brief_json "
+                    "FROM articles WHERE id=?",
+                    (article_id,)
+                ).fetchone()
+            finally:
+                conn.close()
+            if not row:
+                self.send_json({"ok": False, "msg": "文章不存在"}, 404); return
+
+            if row["reading_brief_json"]:
+                try:
+                    self.send_json({"ok": True, "brief": json.loads(row["reading_brief_json"]), "cached": True}); return
+                except Exception:
+                    pass
+
+            profile_hint = ""
+            if user:
+                try:
+                    from db import get_research_profiles
+                    profiles = get_research_profiles(user["email"], DB_PATH)
+                    if profiles:
+                        profile_lines = []
+                        for p in profiles[:3]:
+                            pj = json.loads(p.get("profile_json") or "{}")
+                            profile_lines.append(
+                                f"- {p['name']}: {p['direction']} | 画像: {pj.get('profile_summary','')}"
+                            )
+                        profile_hint = "\n用户研究方向：\n" + "\n".join(profile_lines)
+                except Exception:
+                    profile_hint = ""
+
+            prompt = f"""你是跨学科科研阅读助手。请基于论文/项目标题和摘要，生成结构化中文阅读卡片。
+
+要求：
+1. 不编造原文没有的数据、数据集、代码链接；未知就写“未说明”。
+2. 重点判断这篇内容是否值得用户继续精读。
+3. 输出严格 JSON，不要 Markdown，不要解释。
+
+字段：
+{{
+  "one_sentence": "一句话结论，40字以内",
+  "research_problem": "研究问题",
+  "method": "方法/系统/核心思路",
+  "key_results": "关键结果或证据，未知则写未说明",
+  "datasets": "数据集/实验对象，未知则写未说明",
+  "code_or_artifact": "代码/模型/工具链接情况，未知则写未说明",
+  "relation_to_user": "与用户研究方向的关系；无用户画像则判断其通用价值",
+  "transfer_value": "可迁移到其他交叉领域的启发",
+  "limitations": "局限或风险",
+  "reading_priority": "精读/略读/收藏备用/跳过",
+  "estimated_reading_time": "估计阅读时间，如 5分钟/15分钟",
+  "tags": ["3-6个英文或中文标签"]
+}}
+
+来源：{row['source_name'] or '未知'}
+标题：{row['title']}
+质量分：{row['quality_score']}
+链接：{row['url'] or '无'}
+内容：{(row['content'] or '')[:3500]}
+{profile_hint}"""
+            try:
+                from openai import OpenAI
+                client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+                resp = client.chat.completions.create(
+                    model="deepseek-chat", timeout=60, max_tokens=1400,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                text = resp.choices[0].message.content.strip()
+                text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                brief = json.loads(text)
+                conn = get_conn(DB_PATH)
+                try:
+                    conn.execute("UPDATE articles SET reading_brief_json=? WHERE id=?",
+                                 (json.dumps(brief, ensure_ascii=False), article_id))
+                    conn.commit()
+                finally:
+                    conn.close()
+                self.send_json({"ok": True, "brief": brief, "cached": False})
             except Exception as e:
                 self.send_json({"ok": False, "msg": _friendly_api_error(e)})
 
@@ -6683,7 +7089,7 @@ class Handler(BaseHTTPRequestHandler):
                 for i, a in enumerate(open_answers, 1):
                     stats_text += f"  {i}. {a}\n"
 
-            prompt = f"""你是一位产品分析专家。以下是一份"医疗AI每日论文情报工具"的用户调研数据（问卷结果聚合统计）：
+            prompt = f"""你是一位产品分析专家。以下是一份"AI+X 交叉研究论文雷达"的用户调研数据（问卷结果聚合统计）：
 
 {stats_text}
 
@@ -6762,6 +7168,13 @@ class Handler(BaseHTTPRequestHandler):
                             a["relevance_score"] = round(r["score"], 1)
                             a["relevance_reason"] = r["reason"]
 
+                if all_ids:
+                    from db import get_article_feedback_map
+                    feedback_map = get_article_feedback_map(user["id"], all_ids, DB_PATH)
+                    for a in all_articles:
+                        a["feedback"] = feedback_map.get(a["id"], [])
+                        a["is_starred"] = "star" in a["feedback"]
+
                 digest["_subscribed_domains"] = subscribed
                 digest["_has_profiles"] = bool(profiles)
 
@@ -6802,6 +7215,14 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/status":
             self.send_json(task_status)
 
+        elif path == "/api/pipeline-runs":
+            user = _get_session(self)
+            ADMIN_EMAILS = ['2471149840@qq.com', 'zhengwenxin79@gmail.com']
+            if not user or user["email"] not in ADMIN_EMAILS:
+                self.send_json({"ok": False, "msg": "无权限"}, 403); return
+            from db import list_pipeline_runs
+            self.send_json({"ok": True, "runs": list_pipeline_runs(db_path=DB_PATH)})
+
         elif path == "/api/recommend":
             qs = parse_qs(urlparse(self.path).query)
             topic = qs.get("topic", [""])[0]
@@ -6826,14 +7247,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(task)
 
         elif path == "/api/config":
-            self.send_json({"deepseek_key": DEEPSEEK_API_KEY})
+            self.send_json({"ok": True, "public_config": {
+                "product_name": os.environ.get("PRODUCT_NAME", "AI+X 交叉研究雷达")
+            }})
 
         elif path == "/api/fetch-state":
             last = get_app_state("last_fetch_date") or ""
             self.send_json({"last_fetch_date": last})
 
         elif path == "/api/starred":
-            self.send_json({"articles": get_starred_articles()})
+            user = self._require_login()
+            if not user: return
+            self.send_json({"articles": get_starred_articles(user["id"])})
 
         elif path == "/api/drafts":
             self.send_json({"drafts": get_drafts()})
@@ -6869,17 +7294,21 @@ class Handler(BaseHTTPRequestHandler):
             from db import get_active_subscriptions, get_research_profiles
             subs = get_active_subscriptions(DB_PATH)
             sub = next((s for s in subs if s["email"] == user["email"]), None)
+            profiles = get_research_profiles(user["email"], DB_PATH)
+            profile_payload = [{"id": p["id"], "name": p["name"],
+                                "direction": p["direction"],
+                                "expanded_keywords": json.loads(p.get("expanded_keywords") or "[]"),
+                                "profile_json": json.loads(p.get("profile_json") or "{}"),
+                                "negative_keywords": json.loads(p.get("negative_keywords") or "[]"),
+                                "audience": p.get("audience") or ""}
+                               for p in profiles]
             if sub:
-                profiles = get_research_profiles(user["email"], DB_PATH)
                 self.send_json({"subscribed": True, "keywords": sub["keywords"],
                                 "research_direction": sub.get("research_direction") or "",
                                 "last_sent_at": sub.get("last_sent_at") or "",
-                                "profiles": [{"id": p["id"], "name": p["name"],
-                                              "direction": p["direction"],
-                                              "expanded_keywords": json.loads(p.get("expanded_keywords") or "[]")}
-                                             for p in profiles]})
+                                "profiles": profile_payload})
             else:
-                self.send_json({"subscribed": False})
+                self.send_json({"subscribed": False, "profiles": profile_payload})
 
         elif path == "/api/research-profiles":
             user = _get_session(self)
@@ -6890,6 +7319,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"profiles": [
                 {"id": p["id"], "name": p["name"], "direction": p["direction"],
                  "expanded_keywords": json.loads(p.get("expanded_keywords") or "[]"),
+                 "profile_json": json.loads(p.get("profile_json") or "{}"),
+                 "negative_keywords": json.loads(p.get("negative_keywords") or "[]"),
+                 "audience": p.get("audience") or "",
                  "created_at": p["created_at"]}
                 for p in profiles
             ]})
@@ -7075,7 +7507,7 @@ class Handler(BaseHTTPRequestHandler):
             direction = body.get("direction")
             expanded = body.get("expanded_keywords")
             if direction:
-                from analyze import expand_research_direction
+                from analyze import expand_research_direction, expand_research_profile
                 from db import get_active_subscriptions
                 import base64
                 subs = get_active_subscriptions(DB_PATH)
@@ -7086,11 +7518,15 @@ class Handler(BaseHTTPRequestHandler):
                         api_key = base64.b64decode(sub["api_key"]).decode()
                     except Exception:
                         pass
+                profile_json = expand_research_profile(direction, api_key or DEEPSEEK_API_KEY)
                 expanded = expand_research_direction(direction, api_key or DEEPSEEK_API_KEY)
             from db import update_research_profile
             result = update_research_profile(pid, user["email"], name=name,
                                              direction=direction,
                                              expanded_keywords=expanded,
+                                             profile_json=profile_json if direction else None,
+                                             negative_keywords=(profile_json.get("negative_keywords") if direction and profile_json else None),
+                                             audience=(profile_json.get("audience") if direction and profile_json else None),
                                              db_path=DB_PATH)
             if direction:
                 result["expanded_keywords"] = expanded
@@ -7234,6 +7670,17 @@ class Handler(BaseHTTPRequestHandler):
                 t.start()
             self.send_json({"ok": True})
 
+        elif self.path == "/api/run-daily":
+            user = self._require_login()
+            if not user:
+                return
+            ADMIN_EMAILS = ['2471149840@qq.com', 'zhengwenxin79@gmail.com']
+            if user["email"] not in ADMIN_EMAILS:
+                self.send_json({"ok": False, "msg": "无权限"}, 403)
+                return
+            threading.Thread(target=run_daily_pipeline_job, args=("manual",), daemon=True).start()
+            self.send_json({"ok": True, "msg": "完整 daily pipeline 已开始后台运行"})
+
         elif self.path == "/api/generate/from-articles":
             if not self._require_login():
                 return
@@ -7266,17 +7713,32 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"task_id": task_id})
 
         elif self.path == "/api/star":
-            if not self._require_login():
+            user = self._require_login()
+            if not user:
                 return
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
             art_id = body.get("id")
             starred = body.get("starred", True)
             if art_id:
-                set_starred(int(art_id), starred)
+                set_starred(int(art_id), starred, user)
                 self.send_json({"ok": True})
             else:
                 self.send_json({"error": "missing id"}, 400)
+
+        elif self.path == "/api/article/feedback":
+            user = self._require_login()
+            if not user:
+                return
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            article_id = int(body.get("article_id", 0) or 0)
+            feedback = body.get("feedback", "").strip()
+            note = body.get("note", "").strip()
+            if not article_id or not feedback:
+                self.send_json({"ok": False, "msg": "缺少 article_id 或 feedback"}, 400); return
+            from db import save_article_feedback
+            self.send_json(save_article_feedback(user["id"], user["email"], article_id, feedback, note, DB_PATH))
 
         elif self.path == "/api/drafts/save":
             if not self._require_login():
@@ -7443,7 +7905,7 @@ class Handler(BaseHTTPRequestHandler):
             direction = body.get("direction", "").strip()
             if not direction:
                 self.send_json({"ok": False, "msg": "研究方向不能为空"}, 400); return
-            from analyze import expand_research_direction
+            from analyze import expand_research_direction, expand_research_profile
             from db import create_research_profile, get_active_subscriptions
             import base64
             subs = get_active_subscriptions(DB_PATH)
@@ -7454,8 +7916,16 @@ class Handler(BaseHTTPRequestHandler):
                     api_key = base64.b64decode(sub["api_key"]).decode()
                 except Exception:
                     pass
+            profile_json = expand_research_profile(direction, api_key or DEEPSEEK_API_KEY)
             expanded = expand_research_direction(direction, api_key or DEEPSEEK_API_KEY)
-            pid = create_research_profile(user["email"], name, direction, expanded, DB_PATH)
+            pid = create_research_profile(
+                user["email"], name, direction,
+                expanded_keywords=expanded,
+                profile_json=profile_json,
+                negative_keywords=profile_json.get("negative_keywords", []) if profile_json else [],
+                audience=profile_json.get("audience", "") if profile_json else "",
+                db_path=DB_PATH
+            )
             # 立刻在后台对近7天文章打相关性分，用户无需等待下次每日任务
             _api_key = api_key or DEEPSEEK_API_KEY
             def _score_new_profile(pid, direction, expanded, api_key, db_path):
@@ -7485,7 +7955,7 @@ class Handler(BaseHTTPRequestHandler):
                 direction = body.get("direction")
                 expanded = body.get("expanded_keywords")
                 if direction:
-                    from analyze import expand_research_direction
+                    from analyze import expand_research_direction, expand_research_profile
                     from db import get_active_subscriptions
                     import base64
                     subs = get_active_subscriptions(DB_PATH)
@@ -7496,11 +7966,15 @@ class Handler(BaseHTTPRequestHandler):
                             api_key = base64.b64decode(sub["api_key"]).decode()
                         except Exception:
                             pass
+                    profile_json = expand_research_profile(direction, api_key or DEEPSEEK_API_KEY)
                     expanded = expand_research_direction(direction, api_key or DEEPSEEK_API_KEY)
                 from db import update_research_profile
                 result = update_research_profile(pid, user["email"], name=name,
                                                  direction=direction,
                                                  expanded_keywords=expanded,
+                                                 profile_json=profile_json if direction else None,
+                                                 negative_keywords=(profile_json.get("negative_keywords") if direction and profile_json else None),
+                                                 audience=(profile_json.get("audience") if direction and profile_json else None),
                                                  db_path=DB_PATH)
                 if direction:
                     result["expanded_keywords"] = expanded
@@ -7863,6 +8337,9 @@ if __name__ == "__main__":
 
     # 启动动画任务清理（每30分钟清理超过1小时的已完成任务）
     _cleanup_anim_tasks()
+
+    if os.environ.get("ENABLE_DAILY_SCHEDULER", "false").lower() in ("1", "true", "yes"):
+        schedule_daily_pipeline()
 
     port = int(os.environ.get("PORT", 8888))
     print(f"✓ 服务启动：http://localhost:{port}")

@@ -1,0 +1,211 @@
+{
+  "generated_at": "2026-08-01T11:33:38.307726+00:00",
+  "config": {
+    "db": "/tmp/content_pipeline_eval_benchmark_20260801.db",
+    "queries": "data/eval_queries.sample.jsonl",
+    "queries_from_db": false,
+    "judgments_jsonl": null,
+    "days": 14,
+    "limit": 500,
+    "rankers": "all",
+    "preview_k": 10,
+    "precision_k": 5,
+    "recall_k": 20,
+    "ndcg_k": 10,
+    "irrelevant_k": 10,
+    "output_dir": "benchmarks/reports",
+    "report_prefix": "sample_benchmark",
+    "no_report": false
+  },
+  "dataset": {
+    "queries": 3,
+    "articles": 0,
+    "judgments": 0,
+    "query_ids": [
+      "q_healthcare_vlm",
+      "q_materials_active_learning",
+      "q_robotics_vla"
+    ]
+  },
+  "results": [
+    {
+      "ranker": "keyword",
+      "metrics": {
+        "Precision@5": null,
+        "Recall@20": null,
+        "nDCG@10": null,
+        "MRR": null,
+        "IrrelevantRate@10": null,
+        "JudgedRate@10": null
+      },
+      "per_query": [
+        {
+          "query_id": "q_healthcare_vlm",
+          "title": "医学影像报告生成中的幻觉评估",
+          "judgments": 0,
+          "relevant_judgments": 0,
+          "metrics": {
+            "Precision@5": null,
+            "Recall@20": null,
+            "nDCG@10": null,
+            "MRR": null,
+            "IrrelevantRate@10": null,
+            "JudgedRate@10": null
+          },
+          "top_results": []
+        },
+        {
+          "query_id": "q_materials_active_learning",
+          "title": "材料发现中的主动学习",
+          "judgments": 0,
+          "relevant_judgments": 0,
+          "metrics": {
+            "Precision@5": null,
+            "Recall@20": null,
+            "nDCG@10": null,
+            "MRR": null,
+            "IrrelevantRate@10": null,
+            "JudgedRate@10": null
+          },
+          "top_results": []
+        },
+        {
+          "query_id": "q_robotics_vla",
+          "title": "具身智能中的视觉语言动作模型",
+          "judgments": 0,
+          "relevant_judgments": 0,
+          "metrics": {
+            "Precision@5": null,
+            "Recall@20": null,
+            "nDCG@10": null,
+            "MRR": null,
+            "IrrelevantRate@10": null,
+            "JudgedRate@10": null
+          },
+          "top_results": []
+        }
+      ]
+    },
+    {
+      "ranker": "quality",
+      "metrics": {
+        "Precision@5": null,
+        "Recall@20": null,
+        "nDCG@10": null,
+        "MRR": null,
+        "IrrelevantRate@10": null,
+        "JudgedRate@10": null
+      },
+      "per_query": [
+        {
+          "query_id": "q_healthcare_vlm",
+          "title": "医学影像报告生成中的幻觉评估",
+          "judgments": 0,
+          "relevant_judgments": 0,
+          "metrics": {
+            "Precision@5": null,
+            "Recall@20": null,
+            "nDCG@10": null,
+            "MRR": null,
+            "IrrelevantRate@10": null,
+            "JudgedRate@10": null
+          },
+          "top_results": []
+        },
+        {
+          "query_id": "q_materials_active_learning",
+          "title": "材料发现中的主动学习",
+          "judgments": 0,
+          "relevant_judgments": 0,
+          "metrics": {
+            "Precision@5": null,
+            "Recall@20": null,
+            "nDCG@10": null,
+            "MRR": null,
+            "IrrelevantRate@10": null,
+            "JudgedRate@10": null
+          },
+          "top_results": []
+        },
+        {
+          "query_id": "q_robotics_vla",
+          "title": "具身智能中的视觉语言动作模型",
+          "judgments": 0,
+          "relevant_judgments": 0,
+          "metrics": {
+            "Precision@5": null,
+            "Recall@20": null,
+            "nDCG@10": null,
+            "MRR": null,
+            "IrrelevantRate@10": null,
+            "JudgedRate@10": null
+          },
+          "top_results": []
+        }
+      ]
+    },
+    {
+      "ranker": "hybrid",
+      "metrics": {
+        "Precision@5": null,
+        "Recall@20": null,
+        "nDCG@10": null,
+        "MRR": null,
+        "IrrelevantRate@10": null,
+        "JudgedRate@10": null
+      },
+      "per_query": [
+        {
+          "query_id": "q_healthcare_vlm",
+          "title": "医学影像报告生成中的幻觉评估",
+          "judgments": 0,
+          "relevant_judgments": 0,
+          "metrics": {
+            "Precision@5": null,
+            "Recall@20": null,
+            "nDCG@10": null,
+            "MRR": null,
+            "IrrelevantRate@10": null,
+            "JudgedRate@10": null
+          },
+          "top_results": []
+        },
+        {
+          "query_id": "q_materials_active_learning",
+          "title": "材料发现中的主动学习",
+          "judgments": 0,
+          "relevant_judgments": 0,
+          "metrics": {
+            "Precision@5": null,
+            "Recall@20": null,
+            "nDCG@10": null,
+            "MRR": null,
+            "IrrelevantRate@10": null,
+            "JudgedRate@10": null
+          },
+          "top_results": []
+        },
+        {
+          "query_id": "q_robotics_vla",
+          "title": "具身智能中的视觉语言动作模型",
+          "judgments": 0,
+          "relevant_judgments": 0,
+          "metrics": {
+            "Precision@5": null,
+            "Recall@20": null,
+            "nDCG@10": null,
+            "MRR": null,
+            "IrrelevantRate@10": null,
+            "JudgedRate@10": null
+          },
+          "top_results": []
+        }
+      ]
+    }
+  ],
+  "next_recommendations": [
+    "优先积累 30-50 个真实 query，每个 query 标注 20-50 篇候选文章。",
+    "把当前 benchmark 作为标注验收工具，先看 JudgedRate@10，再看排序指标。",
+    "接入 embedding recall 后，用同一 query set 对比 keyword / hybrid / embedding 的 Recall@20。"
+  ]
+}

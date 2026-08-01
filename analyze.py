@@ -262,7 +262,7 @@ def classify_and_digest(topic: str = None, days: int = 2,
 
     print(f"正在分析 {len(articles)} 篇文章，生成今日情报摘要...\n")
 
-    prompt = f"""你是一个医疗AI领域的情报分析师。以下是今天抓取的文章列表，请帮我完成两件事：
+    prompt = f"""你是一个跨学科科研情报分析师。以下是今天抓取的文章列表，请帮我完成两件事：
 
 1. 将每篇文章分类到以下四类之一：
    - "顶刊论文"：来自Nature/Lancet/NEJM/JAMA/arXiv等学术期刊的研究论文
@@ -302,7 +302,7 @@ def classify_and_digest(topic: str = None, days: int = 2,
 
         # 格式化输出
         print("=" * 60)
-        print(f"今日医疗AI情报摘要")
+        print(f"今日AI+X 研究情报摘要")
         print("=" * 60)
 
         icons = {"顶刊论文": "📄", "大组动态": "🏛", "商业落地": "🏢"}
@@ -403,6 +403,17 @@ def recommend_titles(topic: str = None, db_path: str = "corpus/corpus.db") -> in
 
 def expand_research_direction(direction: str, api_key: str = "") -> list:
     """将自然语言研究方向展开为 10-15 个英文检索关键词，覆盖核心技术、相关方法和上位概念。"""
+    profile = expand_research_profile(direction, api_key=api_key)
+    if profile:
+        keywords = []
+        for key in ("core_methods", "application_domains", "adjacent_methods", "entities"):
+            values = profile.get(key) or []
+            if isinstance(values, list):
+                keywords.extend(values)
+        keywords = [k for k in dict.fromkeys(keywords) if k]
+        if keywords:
+            return keywords[:20]
+
     key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
     if not key or not direction.strip():
         return []
@@ -421,6 +432,40 @@ def expand_research_direction(direction: str, api_key: str = "") -> list:
     except Exception as e:
         print(f"⚠ 关键词展开失败: {e}")
         return []
+
+
+def expand_research_profile(direction: str, api_key: str = "") -> dict:
+    """把自然语言研究方向展开为跨领域研究画像，供召回、排序和推荐解释复用。"""
+    key = api_key or os.environ.get("DEEPSEEK_API_KEY", "")
+    if not key or not direction.strip():
+        return {}
+    client = OpenAI(api_key=key, base_url="https://api.deepseek.com")
+    prompt = f"""你是跨学科科研情报助手。请把用户的研究方向解析成结构化画像，用于每日论文/项目推荐。
+
+研究方向：{direction}
+
+只输出 JSON，不要解释。字段：
+{{
+  "core_methods": ["核心方法/技术英文关键词，5-8个"],
+  "application_domains": ["应用领域英文关键词，3-6个"],
+  "adjacent_methods": ["可能带来跨领域启发的方法，5-8个"],
+  "entities": ["重要任务/数据集/模型/评估指标/机构，0-8个"],
+  "negative_keywords": ["容易误召回但用户不想看的方向，0-6个"],
+  "audience": "典型用户身份，如 PhD researcher / engineer / product researcher",
+  "profile_summary": "用一句中文概括这个研究画像"
+}}"""
+    try:
+        resp = client.chat.completions.create(
+            model="deepseek-chat", timeout=30, max_tokens=700,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        text = resp.choices[0].message.content.strip()
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        data = json.loads(text)
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        print(f"⚠ 研究画像展开失败: {e}")
+        return {}
 
 
 def score_articles_for_profile(profile_id: int, direction: str,
@@ -736,13 +781,14 @@ def _check_concept_ages_openalex(concepts: list,
     for concept in to_query:
         try:
             q = urllib.parse.quote('"' + concept + '"')
+            contact = os.environ.get("PRODUCT_CONTACT_EMAIL", "research-radar@example.com")
             url = ("https://api.openalex.org/works"
                    "?filter=title.search:" + q +
                    "&sort=publication_year:asc&per_page=3"
                    "&select=publication_year"
-                   "&mailto=medai@sugarclaw.top")
+                   f"&mailto={urllib.parse.quote(contact)}")
             req = urllib.request.Request(
-                url, headers={"User-Agent": "MedAI-Emerging/1.0"}
+                url, headers={"User-Agent": "AI-X-Research-Radar/1.0"}
             )
             with urllib.request.urlopen(req, timeout=15) as r:
                 data = json.loads(r.read())
@@ -986,7 +1032,7 @@ def explain_emerging_concepts(concepts: list = None,
         tag = '🆕 全新概念' if c['is_new'] else '📈 快速冒头'
         blocks.append(f"{i}. [{tag}] {c['concept']}（近14天{c['count']}篇）\n{titles}")
 
-    prompt = f"""你是医疗AI领域的科研助手。以下是近14天突然冒头的新研究概念（过去3个月几乎没人提，最近突然出现）。
+    prompt = f"""你是跨学科科研助手。以下是近14天突然冒头的新研究概念（过去3个月几乎没人提，最近突然出现）。
 
 请为每个概念写：
 1. name_zh：中文名（3-8字，简洁准确）
@@ -1148,7 +1194,7 @@ def generate_trend_descriptions(db_path: str = "corpus/corpus.db") -> list:
             f"    - {a['title']}" for a in t.get("articles", [])[:3]
         )
         blocks.append(f"{i}. 关键词：{t['keyword']}（{t['count']}篇）\n{titles}")
-    prompt = f"""你是医疗AI领域的科研助手。以下是近7天上升最快的研究热点关键词及代表论文标题。
+    prompt = f"""你是跨学科科研助手。以下是近7天上升最快的研究热点关键词及代表论文标题。
 
 请为每个热点写一段简短描述（2句话，50字以内），说明：
 1. 这个方向最近在研究什么

@@ -242,6 +242,63 @@ def init_db(db_path: str = "corpus/corpus.db"):
             comic_style     TEXT DEFAULT 'hand-drawn',
             FOREIGN KEY (user_id) REFERENCES users(id)
         )""",
+        "ALTER TABLE user_research_profiles ADD COLUMN profile_json TEXT DEFAULT '{}'",
+        "ALTER TABLE user_research_profiles ADD COLUMN negative_keywords TEXT DEFAULT '[]'",
+        "ALTER TABLE user_research_profiles ADD COLUMN audience TEXT DEFAULT ''",
+        "ALTER TABLE user_research_profiles ADD COLUMN preferred_sources TEXT DEFAULT '[]'",
+        "ALTER TABLE articles ADD COLUMN reading_brief_json TEXT DEFAULT ''",
+        """CREATE TABLE IF NOT EXISTS user_article_feedback (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            email       TEXT NOT NULL,
+            article_id  INTEGER NOT NULL,
+            feedback    TEXT NOT NULL,
+            note        TEXT DEFAULT '',
+            created_at  TEXT DEFAULT (datetime('now')),
+            UNIQUE(user_id, article_id, feedback)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_feedback_user ON user_article_feedback(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_feedback_article ON user_article_feedback(article_id)",
+        """CREATE TABLE IF NOT EXISTS delivery_logs (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            email       TEXT NOT NULL,
+            channel     TEXT DEFAULT 'email',
+            article_ids TEXT DEFAULT '[]',
+            status      TEXT NOT NULL,
+            message     TEXT DEFAULT '',
+            created_at  TEXT DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_delivery_email ON delivery_logs(email)",
+        """CREATE TABLE IF NOT EXISTS pipeline_runs (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_type    TEXT NOT NULL,
+            status      TEXT NOT NULL,
+            started_at  TEXT DEFAULT (datetime('now')),
+            finished_at TEXT,
+            message     TEXT DEFAULT '',
+            log         TEXT DEFAULT ''
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_pipeline_runs_started ON pipeline_runs(started_at)",
+        """CREATE TABLE IF NOT EXISTS eval_queries (
+            id          TEXT PRIMARY KEY,
+            title       TEXT NOT NULL,
+            direction   TEXT NOT NULL,
+            keywords    TEXT DEFAULT '[]',
+            expected_domains TEXT DEFAULT '[]',
+            negative_keywords TEXT DEFAULT '[]',
+            created_at  TEXT DEFAULT (datetime('now'))
+        )""",
+        """CREATE TABLE IF NOT EXISTS eval_judgments (
+            query_id    TEXT NOT NULL,
+            article_id  INTEGER NOT NULL,
+            label       TEXT NOT NULL,
+            note        TEXT DEFAULT '',
+            judged_at   TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (query_id, article_id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_eval_judgments_query ON eval_judgments(query_id)",
+        "ALTER TABLE eval_queries ADD COLUMN expected_domains TEXT DEFAULT '[]'",
+        "ALTER TABLE eval_queries ADD COLUMN negative_keywords TEXT DEFAULT '[]'",
     ]
     for sql in migrations:
         try:
@@ -915,16 +972,25 @@ def _direction_hash(direction: str) -> str:
 
 def create_research_profile(email: str, name: str, direction: str,
                              expanded_keywords: list = None,
+                             profile_json: dict = None,
+                             negative_keywords: list = None,
+                             audience: str = "",
+                             preferred_sources: list = None,
                              db_path: str = "corpus/corpus.db") -> int:
     conn = get_conn(db_path)
     try:
         cursor = conn.execute("""
             INSERT INTO user_research_profiles
-                (sub_email, name, direction, expanded_keywords, direction_hash)
-            VALUES (?,?,?,?,?)
+                (sub_email, name, direction, expanded_keywords, direction_hash,
+                 profile_json, negative_keywords, audience, preferred_sources)
+            VALUES (?,?,?,?,?,?,?,?,?)
         """, (email, name, direction,
               json.dumps(expanded_keywords or [], ensure_ascii=False),
-              _direction_hash(direction)))
+              _direction_hash(direction),
+              json.dumps(profile_json or {}, ensure_ascii=False),
+              json.dumps(negative_keywords or [], ensure_ascii=False),
+              audience or "",
+              json.dumps(preferred_sources or [], ensure_ascii=False)))
         conn.commit()
         return cursor.lastrowid
     finally:
@@ -934,6 +1000,10 @@ def create_research_profile(email: str, name: str, direction: str,
 def update_research_profile(profile_id: int, email: str,
                              name: str = None, direction: str = None,
                              expanded_keywords: list = None,
+                             profile_json: dict = None,
+                             negative_keywords: list = None,
+                             audience: str = None,
+                             preferred_sources: list = None,
                              db_path: str = "corpus/corpus.db") -> dict:
     conn = get_conn(db_path)
     try:
@@ -955,6 +1025,18 @@ def update_research_profile(profile_id: int, email: str,
         if expanded_keywords is not None:
             updates.append("expanded_keywords=?")
             params.append(json.dumps(expanded_keywords, ensure_ascii=False))
+        if profile_json is not None:
+            updates.append("profile_json=?")
+            params.append(json.dumps(profile_json, ensure_ascii=False))
+        if negative_keywords is not None:
+            updates.append("negative_keywords=?")
+            params.append(json.dumps(negative_keywords, ensure_ascii=False))
+        if audience is not None:
+            updates.append("audience=?")
+            params.append(audience)
+        if preferred_sources is not None:
+            updates.append("preferred_sources=?")
+            params.append(json.dumps(preferred_sources, ensure_ascii=False))
         if updates:
             updates.append("updated_at=datetime('now')")
             params.extend([profile_id, email])
@@ -1116,6 +1198,125 @@ def update_subscribed_domains(email: str, domains: list,
             (json.dumps(domains, ensure_ascii=False), email)
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ── user_article_feedback ─────────────────────────────
+
+def save_article_feedback(user_id: int, email: str, article_id: int,
+                          feedback: str, note: str = "",
+                          db_path: str = "corpus/corpus.db") -> dict:
+    allowed = {"star", "unstar", "useful", "irrelevant", "read", "skip", "hide"}
+    if feedback not in allowed:
+        return {"ok": False, "msg": "未知反馈类型"}
+    conn = get_conn(db_path)
+    try:
+        if feedback == "unstar":
+            conn.execute(
+                "DELETE FROM user_article_feedback WHERE user_id=? AND article_id=? AND feedback='star'",
+                (user_id, article_id)
+            )
+        else:
+            conn.execute("""
+                INSERT OR REPLACE INTO user_article_feedback
+                    (user_id, email, article_id, feedback, note, created_at)
+                VALUES (?, ?, ?, ?, ?, datetime('now'))
+            """, (user_id, email, article_id, feedback, note or ""))
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+def get_user_starred_articles(user_id: int, db_path: str = "corpus/corpus.db") -> list:
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("""
+            SELECT a.id, a.title, a.content, a.source, a.source_name, a.url, a.category,
+                   a.quality_score, a.published_at, a.fetched_at, 1 AS is_starred
+            FROM user_article_feedback f
+            JOIN articles a ON a.id = f.article_id
+            WHERE f.user_id=? AND f.feedback='star'
+            ORDER BY f.created_at DESC
+        """, (user_id,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_article_feedback_map(user_id: int, article_ids: list,
+                             db_path: str = "corpus/corpus.db") -> dict:
+    if not user_id or not article_ids:
+        return {}
+    conn = get_conn(db_path)
+    try:
+        ph = ",".join("?" * len(article_ids))
+        rows = conn.execute(f"""
+            SELECT article_id, feedback FROM user_article_feedback
+            WHERE user_id=? AND article_id IN ({ph})
+        """, [user_id] + article_ids).fetchall()
+        result = {}
+        for r in rows:
+            result.setdefault(r["article_id"], set()).add(r["feedback"])
+        return {aid: sorted(vals) for aid, vals in result.items()}
+    finally:
+        conn.close()
+
+
+def save_delivery_log(email: str, article_ids: list, status: str,
+                      message: str = "", channel: str = "email",
+                      db_path: str = "corpus/corpus.db"):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""
+            INSERT INTO delivery_logs (email, channel, article_ids, status, message)
+            VALUES (?, ?, ?, ?, ?)
+        """, (email, channel, json.dumps(article_ids or []), status, message or ""))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def start_pipeline_run(run_type: str, message: str = "",
+                       db_path: str = "corpus/corpus.db") -> int:
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "INSERT INTO pipeline_runs (run_type, status, message) VALUES (?, 'running', ?)",
+            (run_type, message or "")
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def finish_pipeline_run(run_id: int, status: str, message: str = "",
+                        log: str = "", db_path: str = "corpus/corpus.db"):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""
+            UPDATE pipeline_runs
+            SET status=?, finished_at=datetime('now'), message=?, log=?
+            WHERE id=?
+        """, (status, message or "", log or "", run_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_pipeline_runs(limit: int = 20,
+                       db_path: str = "corpus/corpus.db") -> list:
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("""
+            SELECT id, run_type, status, started_at, finished_at, message
+            FROM pipeline_runs
+            ORDER BY started_at DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 

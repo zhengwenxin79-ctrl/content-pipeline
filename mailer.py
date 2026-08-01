@@ -24,21 +24,22 @@ if _env_file.exists():
             _k, _v = _line.split("=", 1)
             os.environ.setdefault(_k.strip(), _v.strip())
 
-from db import get_conn, get_active_subscriptions, update_last_sent
+from db import get_conn, get_active_subscriptions, update_last_sent, save_delivery_log
 
 SMTP_HOST = "smtp.qq.com"
 SMTP_PORT = 465
-SENDER_EMAIL = os.environ.get("MAIL_SENDER", "2471149840@qq.com")
-SENDER_PASSWD = os.environ.get("MAIL_PASSWD", "rwezxcacyrepebjh")
+SENDER_EMAIL = os.environ.get("MAIL_SENDER", "")
+SENDER_PASSWD = os.environ.get("MAIL_PASSWD", "")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 XHS_COOKIE = os.environ.get("XHS_COOKIE", "")
 DB_PATH = os.environ.get("DB_PATH", "corpus/corpus.db")
+PRODUCT_NAME = os.environ.get("PRODUCT_NAME", "AI+X 交叉研究雷达")
 
 
 # ── 小红书抓取 ────────────────────────────────────────────────
 
 def _build_xhs_queries(keywords: str) -> list:
-    """把用户关键词转成医疗AI语境的小红书搜索词"""
+    """把用户关键词转成 AI+X/科研交叉语境的小红书搜索词"""
     raw = [k.strip() for k in keywords.split(",") if k.strip()]
     queries = []
     for kw in raw[:3]:  # 最多取前3个关键词，避免请求过多
@@ -47,7 +48,7 @@ def _build_xhs_queries(keywords: str) -> list:
             queries.append(kw)
         else:
             queries.append(f"AI{kw}")
-    queries.append("医疗AI")  # 兜底：始终搜一条医疗AI综合词
+    queries.append("AI科研")  # 兜底：始终搜一条 AI+科研综合词
     return list(dict.fromkeys(queries))  # 去重保序
 
 
@@ -221,7 +222,7 @@ def build_tiered_articles(sub_email: str, candidates: list,
 
 
 def fetch_xhs_for_keywords(keywords: str, cookie: str = "", candidate_pool: int = 5) -> list:
-    """按关键词抓取小红书热门笔记（自动加医疗AI语境前缀）"""
+    """按关键词抓取小红书热门笔记（自动加 AI+X/科研交叉语境前缀）"""
     if not cookie:
         return []
     try:
@@ -357,7 +358,7 @@ def generate_summaries(articles: list, api_key: str) -> list:
             for a in articles
         ])
 
-        prompt = f"""你是医疗AI领域的科研助手。请为以下论文/文章各写一句话核心总结，要求：
+        prompt = f"""你是跨学科科研助手。请为以下论文/文章各写一句话核心总结，要求：
 1. 40字以内
 2. 格式：[做了什么] + [关键结论或数字]
 3. 直接说结论，不要用"本文"、"研究者"等开头
@@ -530,7 +531,7 @@ def build_html(keywords: str, articles: list, date_str: str, xhs_notes: list = N
 
     <!-- 头部 -->
     <div style="background:linear-gradient(135deg,#667eea,#764ba2);padding:28px 32px">
-      <div style="font-size:20px;font-weight:700;color:white">📊 医疗AI每日情报</div>
+      <div style="font-size:20px;font-weight:700;color:white">📊 AI+X 交叉研究雷达</div>
       <div style="font-size:13px;color:rgba(255,255,255,0.85);margin-top:6px">{date_str} · 共 {len(articles)} 篇匹配文章</div>
     </div>
 
@@ -550,7 +551,7 @@ def build_html(keywords: str, articles: list, date_str: str, xhs_notes: list = N
     <!-- 尾部 -->
     <div style="background:#f7fafc;padding:20px 32px;border-top:1px solid #edf2f7;text-align:center">
       <div style="font-size:12px;color:#a0aec0">
-        由「医疗AI每日情报」自动推送
+        由「AI+X 交叉研究雷达」自动推送
         &nbsp;·&nbsp;
         如需退订，回复此邮件或联系管理员
       </div>
@@ -563,6 +564,9 @@ def build_html(keywords: str, articles: list, date_str: str, xhs_notes: list = N
 # ── 发送单封邮件 ───────────────────────────────────────────────
 
 def send_email(to_email: str, subject: str, html: str) -> bool:
+    if not SENDER_EMAIL or not SENDER_PASSWD:
+        print("  ✗ 邮件未发送：请先配置 MAIL_SENDER 和 MAIL_PASSWD")
+        return False
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
@@ -642,13 +646,16 @@ def run_daily_push(db_path: str = DB_PATH):
         print(f"  → 小红书抓到 {len(xhs_notes)} 篇")
 
         # 构建并发送邮件
-        subject = f"【医疗AI日报】{keywords.split(',')[0]} | 今日{len(articles)}篇 · {date_str}"
+        subject = f"【AI+X 研究雷达】{keywords.split(',')[0]} | 今日{len(articles)}篇 · {date_str}"
         html = build_html(keywords, articles, date_str, xhs_notes=xhs_notes)
 
         ok = send_email(email, subject, html)
         if ok:
             update_last_sent(email, db_path)
+            save_delivery_log(email, [a.get("id") for a in articles], "sent", db_path=db_path)
             print(f"  ✓ 已发送至 {email}")
+        else:
+            save_delivery_log(email, [a.get("id") for a in articles], "failed", "SMTP send failed", db_path=db_path)
 
     print(f"\n✓ 每日推送完成")
 
@@ -698,14 +705,16 @@ def push_single(email: str, db_path: str = DB_PATH) -> dict:
     # 抓取小红书热门笔记
     xhs_notes = fetch_xhs_for_keywords(keywords, cookie=XHS_COOKIE, candidate_pool=5)
 
-    subject = f"【医疗AI情报】{keywords.split(',')[0]} | {len(articles)}篇精选 · {date_str}"
+    subject = f"【AI+X 研究情报】{keywords.split(',')[0]} | {len(articles)}篇精选 · {date_str}"
     html = build_html(keywords, articles, date_str, xhs_notes=xhs_notes)
 
     ok = send_email(email, subject, html)
     if ok:
         update_last_sent(email, db_path)
+        save_delivery_log(email, [a.get("id") for a in articles], "sent", "manual push", db_path=db_path)
         return {"ok": True, "msg": f"已成功推送 {len(articles)} 篇文章至 {email}"}
     else:
+        save_delivery_log(email, [a.get("id") for a in articles], "failed", "manual push SMTP send failed", db_path=db_path)
         return {"ok": False, "msg": "邮件发送失败，请检查SMTP配置"}
 
 
@@ -748,13 +757,13 @@ def build_skill_message(articles: list, xhs_notes: list = None,
 
     if template_style == "card":
         lines.append(f"{'═' * 32}")
-        lines.append(f"  🏥 医疗AI每日情报  {date_str}")
+        lines.append(f"  🏥 AI+X 交叉研究雷达  {date_str}")
         lines.append(f"{'═' * 32}")
     elif template_style == "magazine":
-        lines.append(f"━━━ 🏥 医疗AI情报 · {date_str} ━━━")
+        lines.append(f"━━━ 🏥 AI+X 研究情报 · {date_str} ━━━")
         lines.append("")
     elif template_style == "classic":
-        lines.append(f"【医疗AI每日情报】{date_str}")
+        lines.append(f"【AI+X 交叉研究雷达】{date_str}")
         lines.append("-" * 30)
     else:  # minimal
         lines.append(f"📋 {date_str} 情报")

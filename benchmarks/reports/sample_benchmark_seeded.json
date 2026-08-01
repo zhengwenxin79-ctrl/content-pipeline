@@ -1,0 +1,1336 @@
+{
+  "generated_at": "2026-08-01T11:34:11.075373+00:00",
+  "config": {
+    "db": "/tmp/content_pipeline_eval_benchmark_seeded_20260801.db",
+    "queries": "data/eval_queries.sample.jsonl",
+    "queries_from_db": false,
+    "judgments_jsonl": null,
+    "days": 14,
+    "limit": 500,
+    "rankers": "all",
+    "preview_k": 10,
+    "precision_k": 5,
+    "recall_k": 20,
+    "ndcg_k": 10,
+    "irrelevant_k": 10,
+    "output_dir": "benchmarks/reports",
+    "report_prefix": "sample_benchmark_seeded",
+    "no_report": false
+  },
+  "dataset": {
+    "queries": 3,
+    "articles": 6,
+    "judgments": 7,
+    "query_ids": [
+      "q_healthcare_vlm",
+      "q_materials_active_learning",
+      "q_robotics_vla"
+    ]
+  },
+  "results": [
+    {
+      "ranker": "keyword",
+      "metrics": {
+        "Precision@5": 0.26666666666666666,
+        "Recall@20": 1.0,
+        "nDCG@10": 1.0,
+        "MRR": 1.0,
+        "IrrelevantRate@10": 0.16666666666666666,
+        "JudgedRate@10": 0.38888888888888884
+      },
+      "per_query": [
+        {
+          "query_id": "q_healthcare_vlm",
+          "title": "医学影像报告生成中的幻觉评估",
+          "judgments": 3,
+          "relevant_judgments": 2,
+          "metrics": {
+            "Precision@5": 0.4,
+            "Recall@20": 1.0,
+            "nDCG@10": 1.0,
+            "MRR": 1.0,
+            "IrrelevantRate@10": 0.16666666666666666,
+            "JudgedRate@10": 0.5
+          },
+          "top_results": [
+            {
+              "rank": 1,
+              "article_id": 1,
+              "title": "Factuality evaluation for radiology report generation with multimodal LLMs",
+              "url": "https://arxiv.org/abs/seed1",
+              "source_name": "arXiv",
+              "quality_score": 8.7,
+              "score": 15.984615,
+              "label": "core",
+              "features": {
+                "bm25": 15.984615,
+                "overlap_terms": [
+                  "factuality",
+                  "clinical",
+                  "evaluation",
+                  "multimodal",
+                  "radiology",
+                  "report",
+                  "generation",
+                  "hallucination",
+                  "vision-language",
+                  "model",
+                  "medical",
+                  "imaging"
+                ],
+                "negative_hits": [],
+                "domain_hit": 1
+              }
+            },
+            {
+              "rank": 2,
+              "article_id": 2,
+              "title": "Clinical vision-language models for medical imaging explanation",
+              "url": "https://example.org/seed2",
+              "source_name": "Nature Biomedical Engineering",
+              "quality_score": 8.1,
+              "score": 10.896908,
+              "label": "inspiring",
+              "features": {
+                "bm25": 10.896908,
+                "overlap_terms": [
+                  "clinical",
+                  "evaluation",
+                  "multimodal",
+                  "radiology",
+                  "vision-language",
+                  "medical",
+                  "imaging",
+                  "healthcare",
+                  "ai"
+                ],
+                "negative_hits": [],
+                "domain_hit": 1
+              }
+            },
+            {
+              "rank": 3,
+              "article_id": 4,
+              "title": "Open benchmark for vision-language-action robotic manipulation",
+              "url": "https://github.com/example/vla-benchmark",
+              "source_name": "GitHub Trending",
+              "quality_score": 7.9,
+              "score": 1.156485,
+              "label": null,
+              "features": {
+                "bm25": 1.156485,
+                "overlap_terms": [
+                  "evaluation",
+                  "ai"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0
+              }
+            },
+            {
+              "rank": 4,
+              "article_id": 3,
+              "title": "Active learning for autonomous materials discovery in self-driving labs",
+              "url": "https://arxiv.org/abs/seed3",
+              "source_name": "arXiv",
+              "quality_score": 8.4,
+              "score": 0.431796,
+              "label": null,
+              "features": {
+                "bm25": 0.431796,
+                "overlap_terms": [
+                  "ai"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0
+              }
+            },
+            {
+              "rank": 5,
+              "article_id": 6,
+              "title": "Active learning signals for financial trading automation",
+              "url": "https://example.org/seed6",
+              "source_name": "Finance AI",
+              "quality_score": 7.8,
+              "score": -1.022663,
+              "label": null,
+              "features": {
+                "bm25": -1.022663,
+                "overlap_terms": [
+                  "ai"
+                ],
+                "negative_hits": [
+                  "marketing"
+                ],
+                "domain_hit": 0
+              }
+            },
+            {
+              "rank": 6,
+              "article_id": 5,
+              "title": "Industrial automation sales trends for robot vacuum products",
+              "url": "https://example.org/seed5",
+              "source_name": "Marketing Weekly",
+              "quality_score": 9.1,
+              "score": -1.5,
+              "label": "irrelevant",
+              "features": {
+                "bm25": -1.5,
+                "overlap_terms": [],
+                "negative_hits": [
+                  "marketing"
+                ],
+                "domain_hit": 0
+              }
+            }
+          ]
+        },
+        {
+          "query_id": "q_materials_active_learning",
+          "title": "材料发现中的主动学习",
+          "judgments": 2,
+          "relevant_judgments": 1,
+          "metrics": {
+            "Precision@5": 0.2,
+            "Recall@20": 1.0,
+            "nDCG@10": 1.0,
+            "MRR": 1.0,
+            "IrrelevantRate@10": 0.16666666666666666,
+            "JudgedRate@10": 0.3333333333333333
+          },
+          "top_results": [
+            {
+              "rank": 1,
+              "article_id": 3,
+              "title": "Active learning for autonomous materials discovery in self-driving labs",
+              "url": "https://arxiv.org/abs/seed3",
+              "source_name": "arXiv",
+              "quality_score": 8.4,
+              "score": 18.309099,
+              "label": "core",
+              "features": {
+                "bm25": 18.309099,
+                "overlap_terms": [
+                  "ai",
+                  "for",
+                  "materials",
+                  "discovery",
+                  "active",
+                  "learning",
+                  "self-driving",
+                  "molecular",
+                  "property",
+                  "prediction",
+                  "bayesian",
+                  "optimization"
+                ],
+                "negative_hits": [],
+                "domain_hit": 1
+              }
+            },
+            {
+              "rank": 2,
+              "article_id": 2,
+              "title": "Clinical vision-language models for medical imaging explanation",
+              "url": "https://example.org/seed2",
+              "source_name": "Nature Biomedical Engineering",
+              "quality_score": 8.1,
+              "score": 0.690899,
+              "label": null,
+              "features": {
+                "bm25": 0.690899,
+                "overlap_terms": [
+                  "ai",
+                  "for"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0
+              }
+            },
+            {
+              "rank": 3,
+              "article_id": 4,
+              "title": "Open benchmark for vision-language-action robotic manipulation",
+              "url": "https://github.com/example/vla-benchmark",
+              "source_name": "GitHub Trending",
+              "quality_score": 7.9,
+              "score": 0.525716,
+              "label": null,
+              "features": {
+                "bm25": 0.525716,
+                "overlap_terms": [
+                  "ai",
+                  "for"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0
+              }
+            },
+            {
+              "rank": 4,
+              "article_id": 1,
+              "title": "Factuality evaluation for radiology report generation with multimodal LLMs",
+              "url": "https://arxiv.org/abs/seed1",
+              "source_name": "arXiv",
+              "quality_score": 8.7,
+              "score": 0.065304,
+              "label": null,
+              "features": {
+                "bm25": 0.065304,
+                "overlap_terms": [
+                  "for"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0
+              }
+            },
+            {
+              "rank": 5,
+              "article_id": 6,
+              "title": "Active learning signals for financial trading automation",
+              "url": "https://example.org/seed6",
+              "source_name": "Finance AI",
+              "quality_score": 7.8,
+              "score": -2.458553,
+              "label": "irrelevant",
+              "features": {
+                "bm25": -2.458553,
+                "overlap_terms": [
+                  "ai",
+                  "for",
+                  "active",
+                  "learning"
+                ],
+                "negative_hits": [
+                  "automation",
+                  "financial",
+                  "marketing",
+                  "trading"
+                ],
+                "domain_hit": 0
+              }
+            },
+            {
+              "rank": 6,
+              "article_id": 5,
+              "title": "Industrial automation sales trends for robot vacuum products",
+              "url": "https://example.org/seed5",
+              "source_name": "Marketing Weekly",
+              "quality_score": 9.1,
+              "score": -2.922279,
+              "label": null,
+              "features": {
+                "bm25": -2.922279,
+                "overlap_terms": [
+                  "for"
+                ],
+                "negative_hits": [
+                  "automation",
+                  "marketing"
+                ],
+                "domain_hit": 0
+              }
+            }
+          ]
+        },
+        {
+          "query_id": "q_robotics_vla",
+          "title": "具身智能中的视觉语言动作模型",
+          "judgments": 2,
+          "relevant_judgments": 1,
+          "metrics": {
+            "Precision@5": 0.2,
+            "Recall@20": 1.0,
+            "nDCG@10": 1.0,
+            "MRR": 1.0,
+            "IrrelevantRate@10": 0.16666666666666666,
+            "JudgedRate@10": 0.3333333333333333
+          },
+          "top_results": [
+            {
+              "rank": 1,
+              "article_id": 4,
+              "title": "Open benchmark for vision-language-action robotic manipulation",
+              "url": "https://github.com/example/vla-benchmark",
+              "source_name": "GitHub Trending",
+              "quality_score": 7.9,
+              "score": 13.339448,
+              "label": "core",
+              "features": {
+                "bm25": 13.339448,
+                "overlap_terms": [
+                  "vision-language-action",
+                  "robotics",
+                  "manipulation",
+                  "task",
+                  "planning",
+                  "embodied",
+                  "ai",
+                  "generalization"
+                ],
+                "negative_hits": [],
+                "domain_hit": 1
+              }
+            },
+            {
+              "rank": 2,
+              "article_id": 3,
+              "title": "Active learning for autonomous materials discovery in self-driving labs",
+              "url": "https://arxiv.org/abs/seed3",
+              "source_name": "arXiv",
+              "quality_score": 8.4,
+              "score": 1.438027,
+              "label": null,
+              "features": {
+                "bm25": 1.438027,
+                "overlap_terms": [
+                  "ai",
+                  "learning"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0
+              }
+            },
+            {
+              "rank": 3,
+              "article_id": 1,
+              "title": "Factuality evaluation for radiology report generation with multimodal LLMs",
+              "url": "https://arxiv.org/abs/seed1",
+              "source_name": "arXiv",
+              "quality_score": 8.7,
+              "score": 1.357443,
+              "label": null,
+              "features": {
+                "bm25": 1.357443,
+                "overlap_terms": [
+                  "model"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0
+              }
+            },
+            {
+              "rank": 4,
+              "article_id": 2,
+              "title": "Clinical vision-language models for medical imaging explanation",
+              "url": "https://example.org/seed2",
+              "source_name": "Nature Biomedical Engineering",
+              "quality_score": 8.1,
+              "score": 0.615387,
+              "label": null,
+              "features": {
+                "bm25": 0.615387,
+                "overlap_terms": [
+                  "ai"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0
+              }
+            },
+            {
+              "rank": 5,
+              "article_id": 6,
+              "title": "Active learning signals for financial trading automation",
+              "url": "https://example.org/seed6",
+              "source_name": "Finance AI",
+              "quality_score": 7.8,
+              "score": 0.469361,
+              "label": null,
+              "features": {
+                "bm25": 0.469361,
+                "overlap_terms": [
+                  "ai",
+                  "learning"
+                ],
+                "negative_hits": [
+                  "automation"
+                ],
+                "domain_hit": 0
+              }
+            },
+            {
+              "rank": 6,
+              "article_id": 5,
+              "title": "Industrial automation sales trends for robot vacuum products",
+              "url": "https://example.org/seed5",
+              "source_name": "Marketing Weekly",
+              "quality_score": 9.1,
+              "score": -9.0,
+              "label": "irrelevant",
+              "features": {
+                "bm25": -9.0,
+                "overlap_terms": [],
+                "negative_hits": [
+                  "automation",
+                  "industrial",
+                  "robot",
+                  "sales",
+                  "toy",
+                  "vacuum"
+                ],
+                "domain_hit": 0
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ranker": "quality",
+      "metrics": {
+        "Precision@5": 0.26666666666666666,
+        "Recall@20": 1.0,
+        "nDCG@10": 0.511027673394629,
+        "MRR": 0.3444444444444444,
+        "IrrelevantRate@10": 0.16666666666666666,
+        "JudgedRate@10": 0.38888888888888884
+      },
+      "per_query": [
+        {
+          "query_id": "q_healthcare_vlm",
+          "title": "医学影像报告生成中的幻觉评估",
+          "judgments": 3,
+          "relevant_judgments": 2,
+          "metrics": {
+            "Precision@5": 0.4,
+            "Recall@20": 1.0,
+            "nDCG@10": 0.6462302129493455,
+            "MRR": 0.5,
+            "IrrelevantRate@10": 0.16666666666666666,
+            "JudgedRate@10": 0.5
+          },
+          "top_results": [
+            {
+              "rank": 1,
+              "article_id": 5,
+              "title": "Industrial automation sales trends for robot vacuum products",
+              "url": "https://example.org/seed5",
+              "source_name": "Marketing Weekly",
+              "quality_score": 9.1,
+              "score": 9.1,
+              "label": "irrelevant",
+              "features": {
+                "quality_score": 9.1,
+                "freshness": 1.0
+              }
+            },
+            {
+              "rank": 2,
+              "article_id": 1,
+              "title": "Factuality evaluation for radiology report generation with multimodal LLMs",
+              "url": "https://arxiv.org/abs/seed1",
+              "source_name": "arXiv",
+              "quality_score": 8.7,
+              "score": 8.7,
+              "label": "core",
+              "features": {
+                "quality_score": 8.7,
+                "freshness": 1.0
+              }
+            },
+            {
+              "rank": 3,
+              "article_id": 3,
+              "title": "Active learning for autonomous materials discovery in self-driving labs",
+              "url": "https://arxiv.org/abs/seed3",
+              "source_name": "arXiv",
+              "quality_score": 8.4,
+              "score": 8.4,
+              "label": null,
+              "features": {
+                "quality_score": 8.4,
+                "freshness": 1.0
+              }
+            },
+            {
+              "rank": 4,
+              "article_id": 2,
+              "title": "Clinical vision-language models for medical imaging explanation",
+              "url": "https://example.org/seed2",
+              "source_name": "Nature Biomedical Engineering",
+              "quality_score": 8.1,
+              "score": 8.1,
+              "label": "inspiring",
+              "features": {
+                "quality_score": 8.1,
+                "freshness": 1.0
+              }
+            },
+            {
+              "rank": 5,
+              "article_id": 4,
+              "title": "Open benchmark for vision-language-action robotic manipulation",
+              "url": "https://github.com/example/vla-benchmark",
+              "source_name": "GitHub Trending",
+              "quality_score": 7.9,
+              "score": 7.9,
+              "label": null,
+              "features": {
+                "quality_score": 7.9,
+                "freshness": 1.0
+              }
+            },
+            {
+              "rank": 6,
+              "article_id": 6,
+              "title": "Active learning signals for financial trading automation",
+              "url": "https://example.org/seed6",
+              "source_name": "Finance AI",
+              "quality_score": 7.8,
+              "score": 7.8,
+              "label": null,
+              "features": {
+                "quality_score": 7.8,
+                "freshness": 1.0
+              }
+            }
+          ]
+        },
+        {
+          "query_id": "q_materials_active_learning",
+          "title": "材料发现中的主动学习",
+          "judgments": 2,
+          "relevant_judgments": 1,
+          "metrics": {
+            "Precision@5": 0.2,
+            "Recall@20": 1.0,
+            "nDCG@10": 0.5,
+            "MRR": 0.3333333333333333,
+            "IrrelevantRate@10": 0.16666666666666666,
+            "JudgedRate@10": 0.3333333333333333
+          },
+          "top_results": [
+            {
+              "rank": 1,
+              "article_id": 5,
+              "title": "Industrial automation sales trends for robot vacuum products",
+              "url": "https://example.org/seed5",
+              "source_name": "Marketing Weekly",
+              "quality_score": 9.1,
+              "score": 9.1,
+              "label": null,
+              "features": {
+                "quality_score": 9.1,
+                "freshness": 1.0
+              }
+            },
+            {
+              "rank": 2,
+              "article_id": 1,
+              "title": "Factuality evaluation for radiology report generation with multimodal LLMs",
+              "url": "https://arxiv.org/abs/seed1",
+              "source_name": "arXiv",
+              "quality_score": 8.7,
+              "score": 8.7,
+              "label": null,
+              "features": {
+                "quality_score": 8.7,
+                "freshness": 1.0
+              }
+            },
+            {
+              "rank": 3,
+              "article_id": 3,
+              "title": "Active learning for autonomous materials discovery in self-driving labs",
+              "url": "https://arxiv.org/abs/seed3",
+              "source_name": "arXiv",
+              "quality_score": 8.4,
+              "score": 8.4,
+              "label": "core",
+              "features": {
+                "quality_score": 8.4,
+                "freshness": 1.0
+              }
+            },
+            {
+              "rank": 4,
+              "article_id": 2,
+              "title": "Clinical vision-language models for medical imaging explanation",
+              "url": "https://example.org/seed2",
+              "source_name": "Nature Biomedical Engineering",
+              "quality_score": 8.1,
+              "score": 8.1,
+              "label": null,
+              "features": {
+                "quality_score": 8.1,
+                "freshness": 1.0
+              }
+            },
+            {
+              "rank": 5,
+              "article_id": 4,
+              "title": "Open benchmark for vision-language-action robotic manipulation",
+              "url": "https://github.com/example/vla-benchmark",
+              "source_name": "GitHub Trending",
+              "quality_score": 7.9,
+              "score": 7.9,
+              "label": null,
+              "features": {
+                "quality_score": 7.9,
+                "freshness": 1.0
+              }
+            },
+            {
+              "rank": 6,
+              "article_id": 6,
+              "title": "Active learning signals for financial trading automation",
+              "url": "https://example.org/seed6",
+              "source_name": "Finance AI",
+              "quality_score": 7.8,
+              "score": 7.8,
+              "label": "irrelevant",
+              "features": {
+                "quality_score": 7.8,
+                "freshness": 1.0
+              }
+            }
+          ]
+        },
+        {
+          "query_id": "q_robotics_vla",
+          "title": "具身智能中的视觉语言动作模型",
+          "judgments": 2,
+          "relevant_judgments": 1,
+          "metrics": {
+            "Precision@5": 0.2,
+            "Recall@20": 1.0,
+            "nDCG@10": 0.38685280723454163,
+            "MRR": 0.2,
+            "IrrelevantRate@10": 0.16666666666666666,
+            "JudgedRate@10": 0.3333333333333333
+          },
+          "top_results": [
+            {
+              "rank": 1,
+              "article_id": 5,
+              "title": "Industrial automation sales trends for robot vacuum products",
+              "url": "https://example.org/seed5",
+              "source_name": "Marketing Weekly",
+              "quality_score": 9.1,
+              "score": 9.1,
+              "label": "irrelevant",
+              "features": {
+                "quality_score": 9.1,
+                "freshness": 1.0
+              }
+            },
+            {
+              "rank": 2,
+              "article_id": 1,
+              "title": "Factuality evaluation for radiology report generation with multimodal LLMs",
+              "url": "https://arxiv.org/abs/seed1",
+              "source_name": "arXiv",
+              "quality_score": 8.7,
+              "score": 8.7,
+              "label": null,
+              "features": {
+                "quality_score": 8.7,
+                "freshness": 1.0
+              }
+            },
+            {
+              "rank": 3,
+              "article_id": 3,
+              "title": "Active learning for autonomous materials discovery in self-driving labs",
+              "url": "https://arxiv.org/abs/seed3",
+              "source_name": "arXiv",
+              "quality_score": 8.4,
+              "score": 8.4,
+              "label": null,
+              "features": {
+                "quality_score": 8.4,
+                "freshness": 1.0
+              }
+            },
+            {
+              "rank": 4,
+              "article_id": 2,
+              "title": "Clinical vision-language models for medical imaging explanation",
+              "url": "https://example.org/seed2",
+              "source_name": "Nature Biomedical Engineering",
+              "quality_score": 8.1,
+              "score": 8.1,
+              "label": null,
+              "features": {
+                "quality_score": 8.1,
+                "freshness": 1.0
+              }
+            },
+            {
+              "rank": 5,
+              "article_id": 4,
+              "title": "Open benchmark for vision-language-action robotic manipulation",
+              "url": "https://github.com/example/vla-benchmark",
+              "source_name": "GitHub Trending",
+              "quality_score": 7.9,
+              "score": 7.9,
+              "label": "core",
+              "features": {
+                "quality_score": 7.9,
+                "freshness": 1.0
+              }
+            },
+            {
+              "rank": 6,
+              "article_id": 6,
+              "title": "Active learning signals for financial trading automation",
+              "url": "https://example.org/seed6",
+              "source_name": "Finance AI",
+              "quality_score": 7.8,
+              "score": 7.8,
+              "label": null,
+              "features": {
+                "quality_score": 7.8,
+                "freshness": 1.0
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ranker": "hybrid",
+      "metrics": {
+        "Precision@5": 0.26666666666666666,
+        "Recall@20": 1.0,
+        "nDCG@10": 1.0,
+        "MRR": 1.0,
+        "IrrelevantRate@10": 0.16666666666666666,
+        "JudgedRate@10": 0.38888888888888884
+      },
+      "per_query": [
+        {
+          "query_id": "q_healthcare_vlm",
+          "title": "医学影像报告生成中的幻觉评估",
+          "judgments": 3,
+          "relevant_judgments": 2,
+          "metrics": {
+            "Precision@5": 0.4,
+            "Recall@20": 1.0,
+            "nDCG@10": 1.0,
+            "MRR": 1.0,
+            "IrrelevantRate@10": 0.16666666666666666,
+            "JudgedRate@10": 0.5
+          },
+          "top_results": [
+            {
+              "rank": 1,
+              "article_id": 1,
+              "title": "Factuality evaluation for radiology report generation with multimodal LLMs",
+              "url": "https://arxiv.org/abs/seed1",
+              "source_name": "arXiv",
+              "quality_score": 8.7,
+              "score": 0.9675,
+              "label": "core",
+              "features": {
+                "bm25": 15.984615,
+                "overlap_terms": [
+                  "factuality",
+                  "clinical",
+                  "evaluation",
+                  "multimodal",
+                  "radiology",
+                  "report",
+                  "generation",
+                  "hallucination",
+                  "vision-language",
+                  "model",
+                  "medical",
+                  "imaging"
+                ],
+                "negative_hits": [],
+                "domain_hit": 1,
+                "bm25_norm": 1.0,
+                "quality_norm": 0.87,
+                "freshness": 1.0,
+                "artifact_bonus": 1.0,
+                "negative_penalty": 0.0
+              }
+            },
+            {
+              "rank": 2,
+              "article_id": 2,
+              "title": "Clinical vision-language models for medical imaging explanation",
+              "url": "https://example.org/seed2",
+              "source_name": "Nature Biomedical Engineering",
+              "quality_score": 8.1,
+              "score": 0.697441,
+              "label": "inspiring",
+              "features": {
+                "bm25": 10.896908,
+                "overlap_terms": [
+                  "clinical",
+                  "evaluation",
+                  "multimodal",
+                  "radiology",
+                  "vision-language",
+                  "medical",
+                  "imaging",
+                  "healthcare",
+                  "ai"
+                ],
+                "negative_hits": [],
+                "domain_hit": 1,
+                "bm25_norm": 0.6817,
+                "quality_norm": 0.81,
+                "freshness": 1.0,
+                "artifact_bonus": 0.0,
+                "negative_penalty": 0.0
+              }
+            },
+            {
+              "rank": 3,
+              "article_id": 4,
+              "title": "Open benchmark for vision-language-action robotic manipulation",
+              "url": "https://github.com/example/vla-benchmark",
+              "source_name": "GitHub Trending",
+              "quality_score": 7.9,
+              "score": 0.437292,
+              "label": null,
+              "features": {
+                "bm25": 1.156485,
+                "overlap_terms": [
+                  "evaluation",
+                  "ai"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0,
+                "bm25_norm": 0.0723,
+                "quality_norm": 0.79,
+                "freshness": 1.0,
+                "artifact_bonus": 1.0,
+                "negative_penalty": 0.0
+              }
+            },
+            {
+              "rank": 4,
+              "article_id": 3,
+              "title": "Active learning for autonomous materials discovery in self-driving labs",
+              "url": "https://arxiv.org/abs/seed3",
+              "source_name": "arXiv",
+              "quality_score": 8.4,
+              "score": 0.424857,
+              "label": null,
+              "features": {
+                "bm25": 0.431796,
+                "overlap_terms": [
+                  "ai"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0,
+                "bm25_norm": 0.027,
+                "quality_norm": 0.84,
+                "freshness": 1.0,
+                "artifact_bonus": 1.0,
+                "negative_penalty": 0.0
+              }
+            },
+            {
+              "rank": 5,
+              "article_id": 5,
+              "title": "Industrial automation sales trends for robot vacuum products",
+              "url": "https://example.org/seed5",
+              "source_name": "Marketing Weekly",
+              "quality_score": 9.1,
+              "score": 0.2275,
+              "label": "irrelevant",
+              "features": {
+                "bm25": -1.5,
+                "overlap_terms": [],
+                "negative_hits": [
+                  "marketing"
+                ],
+                "domain_hit": 0,
+                "bm25_norm": 0.0,
+                "quality_norm": 0.91,
+                "freshness": 1.0,
+                "artifact_bonus": 0.0,
+                "negative_penalty": 0.12
+              }
+            },
+            {
+              "rank": 6,
+              "article_id": 6,
+              "title": "Active learning signals for financial trading automation",
+              "url": "https://example.org/seed6",
+              "source_name": "Finance AI",
+              "quality_score": 7.8,
+              "score": 0.195,
+              "label": null,
+              "features": {
+                "bm25": -1.022663,
+                "overlap_terms": [
+                  "ai"
+                ],
+                "negative_hits": [
+                  "marketing"
+                ],
+                "domain_hit": 0,
+                "bm25_norm": 0.0,
+                "quality_norm": 0.78,
+                "freshness": 1.0,
+                "artifact_bonus": 0.0,
+                "negative_penalty": 0.12
+              }
+            }
+          ]
+        },
+        {
+          "query_id": "q_materials_active_learning",
+          "title": "材料发现中的主动学习",
+          "judgments": 2,
+          "relevant_judgments": 1,
+          "metrics": {
+            "Precision@5": 0.2,
+            "Recall@20": 1.0,
+            "nDCG@10": 1.0,
+            "MRR": 1.0,
+            "IrrelevantRate@10": 0.16666666666666666,
+            "JudgedRate@10": 0.3333333333333333
+          },
+          "top_results": [
+            {
+              "rank": 1,
+              "article_id": 3,
+              "title": "Active learning for autonomous materials discovery in self-driving labs",
+              "url": "https://arxiv.org/abs/seed3",
+              "source_name": "arXiv",
+              "quality_score": 8.4,
+              "score": 0.96,
+              "label": "core",
+              "features": {
+                "bm25": 18.309099,
+                "overlap_terms": [
+                  "ai",
+                  "for",
+                  "materials",
+                  "discovery",
+                  "active",
+                  "learning",
+                  "self-driving",
+                  "molecular",
+                  "property",
+                  "prediction",
+                  "bayesian",
+                  "optimization"
+                ],
+                "negative_hits": [],
+                "domain_hit": 1,
+                "bm25_norm": 1.0,
+                "quality_norm": 0.84,
+                "freshness": 1.0,
+                "artifact_bonus": 1.0,
+                "negative_penalty": 0.0
+              }
+            },
+            {
+              "rank": 2,
+              "article_id": 1,
+              "title": "Factuality evaluation for radiology report generation with multimodal LLMs",
+              "url": "https://arxiv.org/abs/seed1",
+              "source_name": "arXiv",
+              "quality_score": 8.7,
+              "score": 0.419461,
+              "label": null,
+              "features": {
+                "bm25": 0.065304,
+                "overlap_terms": [
+                  "for"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0,
+                "bm25_norm": 0.0036,
+                "quality_norm": 0.87,
+                "freshness": 1.0,
+                "artifact_bonus": 1.0,
+                "negative_penalty": 0.0
+              }
+            },
+            {
+              "rank": 3,
+              "article_id": 4,
+              "title": "Open benchmark for vision-language-action robotic manipulation",
+              "url": "https://github.com/example/vla-benchmark",
+              "source_name": "GitHub Trending",
+              "quality_score": 7.9,
+              "score": 0.413292,
+              "label": null,
+              "features": {
+                "bm25": 0.525716,
+                "overlap_terms": [
+                  "ai",
+                  "for"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0,
+                "bm25_norm": 0.0287,
+                "quality_norm": 0.79,
+                "freshness": 1.0,
+                "artifact_bonus": 1.0,
+                "negative_penalty": 0.0
+              }
+            },
+            {
+              "rank": 4,
+              "article_id": 2,
+              "title": "Clinical vision-language models for medical imaging explanation",
+              "url": "https://example.org/seed2",
+              "source_name": "Nature Biomedical Engineering",
+              "quality_score": 8.1,
+              "score": 0.343254,
+              "label": null,
+              "features": {
+                "bm25": 0.690899,
+                "overlap_terms": [
+                  "ai",
+                  "for"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0,
+                "bm25_norm": 0.0377,
+                "quality_norm": 0.81,
+                "freshness": 1.0,
+                "artifact_bonus": 0.0,
+                "negative_penalty": 0.0
+              }
+            },
+            {
+              "rank": 5,
+              "article_id": 5,
+              "title": "Industrial automation sales trends for robot vacuum products",
+              "url": "https://example.org/seed5",
+              "source_name": "Marketing Weekly",
+              "quality_score": 9.1,
+              "score": 0.1075,
+              "label": null,
+              "features": {
+                "bm25": -2.922279,
+                "overlap_terms": [
+                  "for"
+                ],
+                "negative_hits": [
+                  "automation",
+                  "marketing"
+                ],
+                "domain_hit": 0,
+                "bm25_norm": 0.0,
+                "quality_norm": 0.91,
+                "freshness": 1.0,
+                "artifact_bonus": 0.0,
+                "negative_penalty": 0.24
+              }
+            },
+            {
+              "rank": 6,
+              "article_id": 6,
+              "title": "Active learning signals for financial trading automation",
+              "url": "https://example.org/seed6",
+              "source_name": "Finance AI",
+              "quality_score": 7.8,
+              "score": 0.015,
+              "label": "irrelevant",
+              "features": {
+                "bm25": -2.458553,
+                "overlap_terms": [
+                  "ai",
+                  "for",
+                  "active",
+                  "learning"
+                ],
+                "negative_hits": [
+                  "automation",
+                  "financial",
+                  "marketing",
+                  "trading"
+                ],
+                "domain_hit": 0,
+                "bm25_norm": 0.0,
+                "quality_norm": 0.78,
+                "freshness": 1.0,
+                "artifact_bonus": 0.0,
+                "negative_penalty": 0.3
+              }
+            }
+          ]
+        },
+        {
+          "query_id": "q_robotics_vla",
+          "title": "具身智能中的视觉语言动作模型",
+          "judgments": 2,
+          "relevant_judgments": 1,
+          "metrics": {
+            "Precision@5": 0.2,
+            "Recall@20": 1.0,
+            "nDCG@10": 1.0,
+            "MRR": 1.0,
+            "IrrelevantRate@10": 0.16666666666666666,
+            "JudgedRate@10": 0.3333333333333333
+          },
+          "top_results": [
+            {
+              "rank": 1,
+              "article_id": 4,
+              "title": "Open benchmark for vision-language-action robotic manipulation",
+              "url": "https://github.com/example/vla-benchmark",
+              "source_name": "GitHub Trending",
+              "quality_score": 7.9,
+              "score": 0.9475,
+              "label": "core",
+              "features": {
+                "bm25": 13.339448,
+                "overlap_terms": [
+                  "vision-language-action",
+                  "robotics",
+                  "manipulation",
+                  "task",
+                  "planning",
+                  "embodied",
+                  "ai",
+                  "generalization"
+                ],
+                "negative_hits": [],
+                "domain_hit": 1,
+                "bm25_norm": 1.0,
+                "quality_norm": 0.79,
+                "freshness": 1.0,
+                "artifact_bonus": 1.0,
+                "negative_penalty": 0.0
+              }
+            },
+            {
+              "rank": 2,
+              "article_id": 1,
+              "title": "Factuality evaluation for radiology report generation with multimodal LLMs",
+              "url": "https://arxiv.org/abs/seed1",
+              "source_name": "arXiv",
+              "quality_score": 8.7,
+              "score": 0.473469,
+              "label": null,
+              "features": {
+                "bm25": 1.357443,
+                "overlap_terms": [
+                  "model"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0,
+                "bm25_norm": 0.1018,
+                "quality_norm": 0.87,
+                "freshness": 1.0,
+                "artifact_bonus": 1.0,
+                "negative_penalty": 0.0
+              }
+            },
+            {
+              "rank": 3,
+              "article_id": 3,
+              "title": "Active learning for autonomous materials discovery in self-driving labs",
+              "url": "https://arxiv.org/abs/seed3",
+              "source_name": "arXiv",
+              "quality_score": 8.4,
+              "score": 0.469291,
+              "label": null,
+              "features": {
+                "bm25": 1.438027,
+                "overlap_terms": [
+                  "ai",
+                  "learning"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0,
+                "bm25_norm": 0.1078,
+                "quality_norm": 0.84,
+                "freshness": 1.0,
+                "artifact_bonus": 1.0,
+                "negative_penalty": 0.0
+              }
+            },
+            {
+              "rank": 4,
+              "article_id": 2,
+              "title": "Clinical vision-language models for medical imaging explanation",
+              "url": "https://example.org/seed2",
+              "source_name": "Nature Biomedical Engineering",
+              "quality_score": 8.1,
+              "score": 0.347873,
+              "label": null,
+              "features": {
+                "bm25": 0.615387,
+                "overlap_terms": [
+                  "ai"
+                ],
+                "negative_hits": [],
+                "domain_hit": 0,
+                "bm25_norm": 0.0461,
+                "quality_norm": 0.81,
+                "freshness": 1.0,
+                "artifact_bonus": 0.0,
+                "negative_penalty": 0.0
+              }
+            },
+            {
+              "rank": 5,
+              "article_id": 6,
+              "title": "Active learning signals for financial trading automation",
+              "url": "https://example.org/seed6",
+              "source_name": "Finance AI",
+              "quality_score": 7.8,
+              "score": 0.214352,
+              "label": null,
+              "features": {
+                "bm25": 0.469361,
+                "overlap_terms": [
+                  "ai",
+                  "learning"
+                ],
+                "negative_hits": [
+                  "automation"
+                ],
+                "domain_hit": 0,
+                "bm25_norm": 0.0352,
+                "quality_norm": 0.78,
+                "freshness": 1.0,
+                "artifact_bonus": 0.0,
+                "negative_penalty": 0.12
+              }
+            },
+            {
+              "rank": 6,
+              "article_id": 5,
+              "title": "Industrial automation sales trends for robot vacuum products",
+              "url": "https://example.org/seed5",
+              "source_name": "Marketing Weekly",
+              "quality_score": 9.1,
+              "score": 0.0475,
+              "label": "irrelevant",
+              "features": {
+                "bm25": -9.0,
+                "overlap_terms": [],
+                "negative_hits": [
+                  "automation",
+                  "industrial",
+                  "robot",
+                  "sales",
+                  "toy",
+                  "vacuum"
+                ],
+                "domain_hit": 0,
+                "bm25_norm": 0.0,
+                "quality_norm": 0.91,
+                "freshness": 1.0,
+                "artifact_bonus": 0.0,
+                "negative_penalty": 0.3
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "next_recommendations": [
+    "当前按 nDCG@10 看，最佳 baseline 是 `keyword`，后续改造应以它作为离线对照组。",
+    "增加 embedding recall：用研究方向召回语义相关但关键词不重合的论文，重点观察 Recall@20。",
+    "增加 LLM rerank：只重排 Top 50-100 候选，重点观察 nDCG@10 与 IrrelevantRate@10。",
+    "积累用户反馈训练集：把 useful/star/read/irrelevant 映射到偏好标签，为 learning-to-rank 准备特征。",
+    "上线前保留 quality_score 与 freshness 作为 guardrail，避免纯语义召回带来旧文或低质量噪音。"
+  ]
+}

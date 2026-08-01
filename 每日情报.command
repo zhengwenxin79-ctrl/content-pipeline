@@ -3,10 +3,17 @@
 
 cd "$(dirname "$0")"
 
-export DEEPSEEK_API_KEY="sk-498fec10a4c142f8b794c1566ef80a59"
+if [ -f ".env" ]; then
+  set -a
+  . ./.env
+  set +a
+else
+  echo "未找到 .env；请先复制 .env.example 并填入必要配置。"
+  exit 1
+fi
 
 echo "========================================"
-echo "  医疗AI 每日情报 Pipeline"
+echo "  AI+X 交叉研究雷达 Pipeline"
 echo "========================================"
 echo ""
 
