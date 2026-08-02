@@ -639,6 +639,8 @@ def analyze_trends(db_path: str = "corpus/corpus.db",
         'reasoning', 'training', 'language', 'vision', 'visual', 'image',
         'video', 'audio', 'text', 'tasks', 'data', 'dataset', 'results',
         'performance', 'knowledge', 'information', 'human', 'automated',
+        'agent', 'agents', 'llm', 'llms', 'foundation', 'foundation-model',
+        'multimodal', 'prompt', 'prompts', 'alignment', 'robustness',
     }
 
     def _keywords(article: dict) -> list:
@@ -727,12 +729,26 @@ def analyze_trends(db_path: str = "corpus/corpus.db",
         if cnt < 3:
             continue
         avg_q = data['score'] / cnt
+        if avg_q < 6.0 or len(data['articles']) < 2:
+            continue
         ts = _trend_score(cnt, baseline_kw.get(kw, 0), avg_q)
+        if ts <= 0:
+            continue
+        baseline_count = baseline_kw.get(kw, 0)
+        baseline_rate = baseline_count * scale
+        growth_pct = round((cnt - baseline_rate) / (baseline_rate + 1) * 100, 1)
+        confidence = "高" if cnt >= 5 and ts >= 2 else "中" if cnt >= 3 and ts >= 0.8 else "低"
         results.append({
             'type': 'keyword',
             'keyword': kw,
             'count': cnt,
+            'baseline_count': baseline_count,
+            'baseline_rate': round(baseline_rate, 2),
+            'growth_pct': growth_pct,
+            'avg_quality': round(avg_q, 2),
             'trend_score': ts,
+            'confidence': confidence,
+            'scope_note': '本站近7天抓取语料 vs 前23天基线',
             'articles': data['articles'],
         })
 
@@ -988,12 +1004,24 @@ def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
         for r in candidates:
             oldest = ages.get(r['concept'])
             r['openalex_oldest_year'] = oldest
+            r['evidence_count'] = len(r.get('articles') or [])
+            r['scope_note'] = '本站近14天抓取语料 vs 前46天基线；OpenAlex 仅按标题做年龄校验'
             # 如果 OpenAlex 能找到 2022 年前的论文 → 成熟概念，过滤
             if oldest is not None and oldest < 2022:
                 continue
+            if r.get('count', 0) >= 3 and r.get('baseline', 0) == 0 and (oldest is None or oldest >= 2022):
+                r['confidence'] = '高'
+            elif r.get('count', 0) >= 2 and float(r.get('baseline') or 0) <= 1.0 and (oldest is None or oldest >= 2022):
+                r['confidence'] = '中'
+            else:
+                r['confidence'] = '低'
             filtered.append(r)
         return filtered[:top_n]
 
+    for r in candidates:
+        r['evidence_count'] = len(r.get('articles') or [])
+        r['confidence'] = '低'
+        r['scope_note'] = '本站近14天抓取语料 vs 前46天基线'
     return candidates[:top_n]
 
 
@@ -1016,7 +1044,9 @@ def explain_emerging_concepts(concepts: list = None,
     if row and row['value']:
         try:
             cached = json.loads(row['value'])
-            if time.time() - cached.get('ts', 0) < 43200:  # 12小时
+            concepts_cached = cached.get('concepts') or []
+            has_confidence = all('confidence' in c for c in concepts_cached)
+            if has_confidence and time.time() - cached.get('ts', 0) < 43200:  # 12小时
                 return cached['concepts']
         except Exception:
             pass
@@ -1177,7 +1207,9 @@ def generate_trend_descriptions(db_path: str = "corpus/corpus.db") -> list:
     if row and row["value"]:
         try:
             cached = json.loads(row["value"])
-            if time.time() - cached.get("ts", 0) < 86400:
+            trends_cached = cached.get("trends") or []
+            has_evidence = all("baseline_count" in t and "avg_quality" in t for t in trends_cached)
+            if has_evidence and time.time() - cached.get("ts", 0) < 86400:
                 return cached["trends"]
         except Exception:
             pass

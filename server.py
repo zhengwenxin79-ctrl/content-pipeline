@@ -1491,7 +1491,7 @@ def _is_medical(title: str, content: str, source_name: str) -> bool:
 
 
 def get_digest_data(days=2):
-    """从数据库读取分类后的文章，过滤为医疗相关，附带日期和英文标题翻译"""
+    """从数据库读取分类后的 AI+X 候选文章，附带日期和英文标题翻译。"""
     conn = get_conn(DB_PATH)
     rows = conn.execute("""
         SELECT id, title, content, source, source_name, url, category, quality_score,
@@ -1577,6 +1577,125 @@ def get_digest_data(days=2):
     result["_generating_summaries"] = generating_summaries
     result["_need_summary_count"] = len(need_summary)
     return result
+
+
+def _all_digest_articles(digest: dict) -> list:
+    articles = []
+    for cat, rows in digest.items():
+        if cat.startswith("_") or not isinstance(rows, list):
+            continue
+        for a in rows:
+            a["_category"] = cat
+            articles.append(a)
+    return articles
+
+
+def _brief_priority_value(article: dict) -> str:
+    brief = article.get("reading_brief") or {}
+    if isinstance(brief, dict):
+        return str(brief.get("reading_priority") or "")
+    return ""
+
+
+def _has_negative_feedback(article: dict) -> bool:
+    feedback = set(article.get("feedback") or [])
+    return bool(feedback & {"irrelevant", "hide", "read", "skip"})
+
+
+RADAR_PICK_LIMIT = 5
+RADAR_MORE_LIMIT = 12
+RADAR_PER_CATEGORY_LIMIT = 2
+
+
+def _is_radar_pick(article: dict, has_profiles: bool, has_relevance_scores: bool) -> bool:
+    if _has_negative_feedback(article):
+        return False
+
+    score = float(article.get("score") or 0)
+    rel = article.get("relevance_score")
+    rel = float(rel) if rel is not None else None
+    priority = _brief_priority_value(article)
+
+    if has_profiles and has_relevance_scores:
+        return (
+            (rel is not None and rel >= 8)
+            or (rel is not None and rel >= 7 and score >= 8.0)
+            or (rel is not None and rel >= 6.5 and priority.startswith("精读"))
+        )
+
+    # 无画像或画像刚创建但尚未完成个性化评分时，只展示高质量通用候选。
+    return score >= 8.7
+
+
+def _is_more_candidate(article: dict, has_profiles: bool, has_relevance_scores: bool) -> bool:
+    if _has_negative_feedback(article):
+        return False
+
+    score = float(article.get("score") or 0)
+    rel = article.get("relevance_score")
+    rel = float(rel) if rel is not None else None
+
+    if has_profiles and has_relevance_scores:
+        return (rel is not None and rel >= 5.5) or score >= 8.0
+
+    return score >= 8.0
+
+
+def attach_radar_recommendations(digest: dict, has_profiles: bool = False):
+    """为首页生成强收敛推荐：默认只露出少量今日必读，其余折叠。"""
+    articles = _all_digest_articles(digest)
+    has_relevance_scores = any(a.get("relevance_score") is not None for a in articles)
+
+    def sort_key(a: dict):
+        rel = a.get("relevance_score")
+        rel_val = float(rel) if rel is not None else -1.0
+        score = float(a.get("score") or 0)
+        priority_bonus = 1.5 if _brief_priority_value(a).startswith("精读") else 0
+        return (rel_val + priority_bonus, score)
+
+    sorted_articles = sorted(articles, key=sort_key, reverse=True)
+    picks = []
+    per_cat = {}
+    for a in sorted_articles:
+        if not _is_radar_pick(a, has_profiles, has_relevance_scores):
+            continue
+        cat = a.get("_category") or "未分类"
+        if per_cat.get(cat, 0) >= RADAR_PER_CATEGORY_LIMIT:
+            continue
+        picks.append(a)
+        per_cat[cat] = per_cat.get(cat, 0) + 1
+        if len(picks) >= RADAR_PICK_LIMIT:
+            break
+
+    picked_ids = {a["id"] for a in picks}
+    more = [
+        a for a in sorted_articles
+        if a["id"] not in picked_ids
+        and _is_more_candidate(a, has_profiles, has_relevance_scores)
+    ][:RADAR_MORE_LIMIT]
+
+    if has_profiles and has_relevance_scores:
+        mode = "personalized"
+        notice = "已按你的研究方向收敛为今日必读；默认只展示最高匹配的少量论文。"
+    elif has_profiles:
+        mode = "profile_pending"
+        notice = "画像已创建，但个性化评分尚未覆盖当前文章；暂用极高质量通用候选兜底。"
+    else:
+        mode = "generic"
+        notice = "当前是通用模式。填写研究方向后，首页会优先展示与你方向高度相关的 3-5 篇。"
+
+    if not picks:
+        notice = (
+            "当前没有达到精选阈值的推荐。可以细化研究方向、等待下一次每日更新，"
+            "或展开更多候选人工查看。"
+        )
+
+    digest["_radar_picks"] = picks
+    digest["_more_candidates"] = more
+    digest["_recommendation_mode"] = mode
+    digest["_recommendation_notice"] = notice
+    digest["_has_relevance_scores"] = has_relevance_scores
+    digest["_radar_pick_count"] = len(picks)
 
 
 HTML = """<!DOCTYPE html>
@@ -2018,14 +2137,14 @@ HTML = """<!DOCTYPE html>
 <div class="page active" id="page-digest">
   <div class="main">
     <div class="radar-intro">
-      <h2>AI+X 交叉研究雷达：每天帮你挑出 5-10 篇真正值得读的论文和项目</h2>
+      <h2>AI+X 交叉研究雷达：每天帮你挑出 3-5 篇真正值得读的论文和项目</h2>
       <p>
         输入你的研究方向，系统会从顶刊、arXiv、开源项目和行业信号里筛选高价值内容，
         给出个人匹配度、推荐理由、跨领域迁移价值，并生成中文结构化阅读卡片。
       </p>
       <div class="radar-points">
         <div class="radar-point"><b>研究方向驱动</b><span>用自然语言描述课题，自动展开关键词、核心方法和邻近方法。</span></div>
-        <div class="radar-point"><b>少而准的每日推荐</b><span>优先展示高质量、高匹配、可迁移的 5-10 篇内容。</span></div>
+        <div class="radar-point"><b>少而准的每日推荐</b><span>优先展示高质量、高匹配、可迁移的 3-5 篇内容。</span></div>
         <div class="radar-point"><b>中文阅读 brief</b><span>快速看到研究问题、方法、结果、数据集、代码、局限和阅读建议。</span></div>
         <div class="radar-point"><b>反馈持续校准</b><span>通过收藏、有用、不相关、已读，让后续推荐更贴近你的方向。</span></div>
       </div>
@@ -2040,24 +2159,24 @@ HTML = """<!DOCTYPE html>
     </div>
     <div class="stats-row" id="statsRow"></div>
 
-    <!-- 新概念预警 -->
+    <!-- 近期冒头信号 -->
     <div id="emergingSection" style="margin-bottom:20px;display:none">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
         <span style="font-size:14px;font-weight:700;color:#2d3748">
-          ⚡ 新概念预警
-          <span style="font-size:11px;font-weight:400;color:#a0aec0;margin-left:6px">· 过去2个月几乎没有、最近14天突然冒头的研究方向</span>
+          ⚡ 近期冒头信号
+          <span style="font-size:11px;font-weight:400;color:#a0aec0;margin-left:6px">· 本站近14天语料信号，不等同于全网新概念</span>
         </span>
         <button onclick="loadEmerging()" style="background:none;border:none;color:#a0aec0;font-size:18px;cursor:pointer" title="刷新">⟳</button>
       </div>
       <div id="emergingCards" style="display:grid;gap:10px"></div>
     </div>
 
-    <!-- 热点追踪 -->
+    <!-- 语料热点追踪 -->
     <div id="trendsSection" style="margin-bottom:20px;display:none">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
         <span style="font-size:14px;font-weight:700;color:#2d3748">
-          🔥 研究热点追踪
-          <span style="font-size:11px;font-weight:400;color:#a0aec0;margin-left:6px">· 近7天上升最快的方向 · <span style="color:#667eea">点击卡片查看 AI 解读和代表论文</span></span>
+          🔥 本站语料热点追踪
+          <span style="font-size:11px;font-weight:400;color:#a0aec0;margin-left:6px">· 近7天 vs 前23天统计信号 · <span style="color:#667eea">点击卡片查看证据</span></span>
         </span>
         <div style="display:flex;align-items:center;gap:6px">
           <div style="display:flex;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;font-size:12px">
@@ -2841,12 +2960,17 @@ async function loadEmerging() {
 
     const worthColor = {'跟':'#276749','观望':'#92400e','不建议':'#c53030'};
     const worthBg    = {'跟':'#f0fff4','观望':'#fffbeb','不建议':'#fff5f5'};
+    const visible = concepts.filter(c => (c.confidence || '低') !== '低');
+    const low = concepts.filter(c => (c.confidence || '低') === '低');
 
-    box.innerHTML = concepts.map((c, i) => {
+    const renderConceptCard = (c) => {
       const isNew = c.is_new;
       const badge = isNew
-        ? '<span style="background:#e9d8fd;color:#553c9a;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px">🆕 全新概念</span>'
+        ? '<span style="background:#e9d8fd;color:#553c9a;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px">🆕 新冒头</span>'
         : '<span style="background:#ebf8ff;color:#2b6cb0;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px">📈 快速冒头</span>';
+      const conf = c.confidence || '低';
+      const confColor = conf === '高' ? '#276749' : conf === '中' ? '#92400e' : '#718096';
+      const confBg = conf === '高' ? '#f0fff4' : conf === '中' ? '#fffbeb' : '#f7fafc';
 
       const worth = c.worth || '观望';
       const worthTag = `<span style="background:${worthBg[worth]||'#f7fafc'};color:${worthColor[worth]||'#4a5568'};
@@ -2855,11 +2979,11 @@ async function loadEmerging() {
       </span>`;
 
       const arts = (c.articles||[]).slice(0,2).map(a =>
-        `<a href="${a.url||'#'}" target="_blank"
+        `<a href="${escHtml(a.url||'#')}" target="_blank"
            style="display:block;font-size:12px;color:#4a5568;text-decoration:none;
                   padding:4px 0;border-bottom:1px solid #f0f0f0;line-height:1.5
                   ;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-           title="${a.title}">→ ${a.title}</a>`
+           title="${escHtml(a.title)}">→ ${escHtml(a.title)}</a>`
       ).join('');
 
       return `<div style="background:white;border-radius:12px;padding:16px 18px;
@@ -2867,19 +2991,38 @@ async function loadEmerging() {
                           border-left:4px solid ${isNew?'#9f7aea':'#4299e1'}">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
           ${badge}
-          <span style="font-size:15px;font-weight:700;color:#2d3748">${c.name_zh||c.concept}</span>
-          <span style="font-size:12px;color:#a0aec0">${c.concept}</span>
+          <span style="background:${confBg};color:${confColor};font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px">置信度 ${escHtml(conf)}</span>
+          <span style="font-size:15px;font-weight:700;color:#2d3748">${escHtml(c.name_zh||c.concept)}</span>
+          <span style="font-size:12px;color:#a0aec0">${escHtml(c.concept)}</span>
           <span style="margin-left:auto;font-size:12px;color:#718096">近14天 <strong>${c.count}</strong> 篇</span>
         </div>
-        ${c.what ? `<div style="font-size:13px;color:#4a5568;margin-bottom:6px">📌 ${c.what}</div>` : ''}
-        ${c.why_hot ? `<div style="font-size:13px;color:#718096;margin-bottom:10px">🔥 ${c.why_hot}</div>` : ''}
+        ${c.what ? `<div style="font-size:13px;color:#4a5568;margin-bottom:6px">📌 ${escHtml(c.what)}</div>` : ''}
+        ${c.why_hot ? `<div style="font-size:13px;color:#718096;margin-bottom:10px">🔥 ${escHtml(c.why_hot)}</div>` : ''}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:#718096;margin-bottom:10px">
+          <span>breakout ${escHtml(c.breakout_score)}</span>
+          <span>baseline ${escHtml(c.baseline)}</span>
+          <span>OpenAlex 最早 ${escHtml(c.openalex_oldest_year || '未查到')}</span>
+          <span>证据 ${escHtml(c.evidence_count || (c.articles||[]).length)} 篇</span>
+        </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
           ${worthTag}
-          ${c.worth_reason ? `<span style="font-size:12px;color:#718096">${c.worth_reason}</span>` : ''}
+          ${c.worth_reason ? `<span style="font-size:12px;color:#718096">${escHtml(c.worth_reason)}</span>` : ''}
         </div>
+        ${c.scope_note ? `<div style="font-size:11px;color:#a0aec0;margin-bottom:6px">${escHtml(c.scope_note)}</div>` : ''}
         ${arts ? `<div style="margin-top:6px">${arts}</div>` : ''}
       </div>`;
-    }).join('');
+    };
+
+    const visibleHtml = visible.length
+      ? visible.map(renderConceptCard).join('')
+      : '<div style="background:white;border-radius:10px;padding:18px;color:#718096;font-size:13px">暂无中高置信冒头信号。</div>';
+    const lowHtml = low.length
+      ? `<details style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px">
+          <summary style="cursor:pointer;font-size:13px;color:#718096;font-weight:600">查看低置信号 · ${low.length} 个</summary>
+          <div style="display:grid;gap:10px;margin-top:10px">${low.map(renderConceptCard).join('')}</div>
+        </details>`
+      : '';
+    box.innerHTML = visibleHtml + lowHtml;
   } catch(e) {
     box.innerHTML = '<div style="color:#e53e3e;font-size:13px">加载失败</div>';
   }
@@ -2900,9 +3043,9 @@ async function loadTrends() {
     box.innerHTML = trends.map((t, i) => {
       const color = colors[Math.min(i, colors.length - 1)];
       const arrow = t.trend_score > 1 ? '🔥' : t.trend_score > 0 ? '📈' : '➡️';
-      const pct = t.trend_score > 0
-        ? `+${Math.round(t.trend_score * 100)}%`
-        : `${Math.round(t.trend_score * 100)}%`;
+      const pctNum = Number(t.growth_pct ?? (t.trend_score * 100));
+      const pct = pctNum > 0 ? `+${Math.round(pctNum)}%` : `${Math.round(pctNum)}%`;
+      const conf = t.confidence || '中';
       return `<div onclick="showTrendDetail(${i})"
         style="display:flex;align-items:center;gap:6px;padding:6px 12px;
                background:white;border:1.5px solid #e2e8f0;border-radius:20px;
@@ -2911,9 +3054,10 @@ async function loadTrends() {
         onmouseout="this.style.borderColor='#e2e8f0';this.style.color=''"
         data-idx="${i}">
         <span>${arrow}</span>
-        <span style="font-weight:600">${t.keyword}</span>
+        <span style="font-weight:600">${escHtml(t.keyword)}</span>
         <span style="font-size:11px;color:#a0aec0">${t.count}篇</span>
         <span style="font-size:11px;font-weight:700;color:${color}">${pct}</span>
+        <span style="font-size:10px;color:#718096;background:#f7fafc;border-radius:9px;padding:1px 6px">置信度 ${escHtml(conf)}</span>
       </div>`;
     }).join('');
 
@@ -2925,33 +3069,37 @@ function showTrendDetail(idx) {
   const t = (window._trendsData || [])[idx];
   if (!t) return;
   const arrow = t.trend_score > 1 ? '🔥' : t.trend_score > 0 ? '📈' : '➡️';
-  const pct = t.trend_score > 0
-    ? `+${Math.round(t.trend_score * 100)}%` : `${Math.round(t.trend_score * 100)}%`;
+  const pctNum = Number(t.growth_pct ?? (t.trend_score * 100));
+  const pct = pctNum > 0 ? `+${Math.round(pctNum)}%` : `${Math.round(pctNum)}%`;
 
   const descHtml = t.desc
     ? `<div style="background:#f0f7ff;border-left:3px solid #3182ce;border-radius:0 8px 8px 0;
                   padding:10px 14px;margin-bottom:16px;font-size:14px;color:#2d3748;line-height:1.7">
-         ${t.desc}
+         ${escHtml(t.desc)}
        </div>`
     : '';
 
   const arts = (t.articles || []).map((a, i) =>
     `<div style="padding:8px 0;border-bottom:1px solid #f0f0f0">
-       <a href="${a.url || '#'}" target="_blank"
+       <a href="${escHtml(a.url || '#')}" target="_blank"
          style="font-size:13px;color:#2d3748;text-decoration:none;font-weight:500;line-height:1.5">
-         ${i+1}. ${a.title}
+         ${i+1}. ${escHtml(a.title)}
        </a>
-       <div style="font-size:11px;color:#a0aec0;margin-top:2px">${a.source_name || ''}</div>
+       <div style="font-size:11px;color:#a0aec0;margin-top:2px">${escHtml(a.source_name || '')}</div>
      </div>`
   ).join('') || '<div style="color:#a0aec0;font-size:13px">暂无代表论文</div>';
 
   document.getElementById('trendModalContent').innerHTML = `
     <div style="font-size:18px;font-weight:700;color:#2d3748;margin-bottom:4px">
-      ${arrow} ${t.keyword}
+      ${arrow} ${escHtml(t.keyword)}
     </div>
     <div style="font-size:13px;color:#718096;margin-bottom:12px">
-      近7天 <strong>${t.count}</strong> 篇 · 增长 <strong style="color:#e53e3e">${pct}</strong>
+      近7天 <strong>${t.count}</strong> 篇 · 前23天基线 <strong>${escHtml(t.baseline_count ?? 0)}</strong> 篇
+      · 增长 <strong style="color:#e53e3e">${pct}</strong>
+      · 平均质量分 <strong>${escHtml(t.avg_quality ?? '未知')}</strong>
+      · 置信度 <strong>${escHtml(t.confidence || '中')}</strong>
     </div>
+    <div style="font-size:11px;color:#a0aec0;margin-bottom:10px">${escHtml(t.scope_note || '本站语料统计信号')}</div>
     ${descHtml}
     <div style="font-size:12px;font-weight:700;color:#a0aec0;letter-spacing:.06em;margin-bottom:8px">代表论文</div>
     ${arts}`;
@@ -3372,61 +3520,38 @@ function _articleMatchesFilter(a) {
   return true;
 }
 
-function renderDigest(digest) {
-  if (!digest) return;
-  const sections = [
-    { key: '顶刊论文', icon: '📄', cls: 'journal' },
-    { key: '大组动态', icon: '🏛', cls: 'lab' },
-    { key: '商业落地', icon: '🏢', cls: 'biz' },
-    { key: '开源项目', icon: '💻', cls: 'github' },
-  ];
-  let html = '';
-  let hasAny = false;
-
-  for (const sec of sections) {
-    let items = (digest[sec.key] || []).filter(_articleMatchesFilter);
-    // 有相关性分的文章置顶，其次按质量分
-    items.sort((a, b) => (b.relevance_score||0) - (a.relevance_score||0) || b.score - a.score);
-    if (!items.length) continue;
-    hasAny = true;
-    html += `<div class="section">
-      <div class="section-title">
-        ${sec.icon} ${sec.key}
-        <span class="badge">${items.length} 篇</span>
-      </div>
-      <div class="articles">`;
-    for (const a of items) {
-      const safeUrl = escHtml(a.url || '');
-      const titleZh = a.title_zh || (/[一-鿿]/.test(a.title || '') ? a.title : '');
-      const displayTitle = titleZh || a.title;
-      const originalTitle = titleZh && titleZh !== a.title ? a.title : '';
-      const link = safeUrl ? `<a href="${safeUrl}" target="_blank">${escHtml(displayTitle)}</a>` : escHtml(displayTitle);
-      const originalLine = originalTitle ? `<div class="article-title-zh" style="color:#718096;font-weight:400">原标题：${escHtml(originalTitle)}</div>` : '';
-      const datePart = a.date ? ` · ${a.date}` : '';
-      const brief = a.reading_brief || {};
-      const matchScore = Number(a.relevance_score || 0);
-      const matchText = matchScore ? `${matchScore.toFixed(1)}/10` : '待画像匹配';
-      const recommendReason = a.relevance_reason || brief.relation_to_user || a.summary || '高质量 AI+X 候选，建议结合你的研究方向快速判断。';
-      const transferValue = brief.transfer_value || inferTransferValue(a);
-      const priority = brief.reading_priority || priorityForArticle(a);
-      // 相关性徽章
-      const relBadge = (a.relevance_score >= 6)
-        ? `<span title="${escHtml(a.relevance_reason||'')}"
-             style="font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;
-                    background:#e9d8fd;color:#553c9a;white-space:nowrap;cursor:default">
-             🎯 ${a.relevance_score.toFixed(1)}
-           </span>` : '';
-      // 话题标签（第一个 domain_tag）
-      const domainTag = (a.domain_tags||[])[0];
-      const domainBadge = domainTag
-        ? `<span onclick="clickTopicCard('${escHtml(domainTag)}')"
-             style="font-size:11px;padding:2px 8px;border-radius:10px;
-                    background:#ebf8ff;color:#2b6cb0;cursor:pointer;white-space:nowrap">
-             ${escHtml(domainTag)}
-           </span>` : '';
-      const starText = a.is_starred ? '★' : '☆';
-      const starStyle = a.is_starred ? 'opacity:1;color:#f6ad55' : 'opacity:0.4';
-      html += `<div class="article-card ${sec.cls}" id="acard-${a.id}">
+function articleCardHtml(a, cls, showCategory=false) {
+  const safeUrl = escHtml(a.url || '');
+  const titleZh = a.title_zh || (/[一-鿿]/.test(a.title || '') ? a.title : '');
+  const displayTitle = titleZh || a.title;
+  const originalTitle = titleZh && titleZh !== a.title ? a.title : '';
+  const link = safeUrl ? `<a href="${safeUrl}" target="_blank">${escHtml(displayTitle)}</a>` : escHtml(displayTitle);
+  const originalLine = originalTitle ? `<div class="article-title-zh" style="color:#718096;font-weight:400">原标题：${escHtml(originalTitle)}</div>` : '';
+  const brief = a.reading_brief || {};
+  const matchScore = Number(a.relevance_score || 0);
+  const matchText = matchScore ? `${matchScore.toFixed(1)}/10` : '待画像匹配';
+  const recommendReason = a.relevance_reason || brief.relation_to_user || a.summary || '高质量 AI+X 候选，建议结合你的研究方向快速判断。';
+  const transferValue = brief.transfer_value || inferTransferValue(a);
+  const priority = brief.reading_priority || priorityForArticle(a);
+  const relBadge = (a.relevance_score >= 6)
+    ? `<span title="${escHtml(a.relevance_reason||'')}"
+         style="font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;
+                background:#e9d8fd;color:#553c9a;white-space:nowrap;cursor:default">
+         🎯 ${Number(a.relevance_score).toFixed(1)}
+       </span>` : '';
+  const domainTag = (a.domain_tags||[])[0];
+  const domainBadge = domainTag
+    ? `<span onclick="clickTopicCard('${escHtml(domainTag)}')"
+         style="font-size:11px;padding:2px 8px;border-radius:10px;
+                background:#ebf8ff;color:#2b6cb0;cursor:pointer;white-space:nowrap">
+         ${escHtml(domainTag)}
+       </span>` : '';
+  const catBadge = showCategory && a._category
+    ? `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#f7fafc;color:#718096;border:1px solid #e2e8f0">${escHtml(a._category)}</span>`
+    : '';
+  const starText = a.is_starred ? '★' : '☆';
+  const starStyle = a.is_starred ? 'opacity:1;color:#f6ad55' : 'opacity:0.4';
+  return `<div class="article-card ${cls || ''}" id="acard-${a.id}">
         <div class="article-select-wrap">
           <input type="checkbox" id="chk-${a.id}" value="${a.id}" onchange="onArticleCheck(${a.id}, this.checked)">
           <div class="article-card-body">
@@ -3447,6 +3572,7 @@ function renderDigest(digest) {
               <span style="color:#553c9a">个人匹配度 ${matchText}</span>
               <span class="priority-chip">${escHtml(priority)}</span>
               ${domainBadge}
+              ${catBadge}
             </div>
             <div class="article-summary" id="summary-${a.id}" style="${a.summary ? '' : 'display:none'}">${escHtml(a.summary || '')}</div>
             <div class="article-brief-line">
@@ -3483,15 +3609,64 @@ function renderDigest(digest) {
           </div>
         </div>
       </div>`;
+}
+
+function renderDigest(digest) {
+  if (!digest) return;
+  const sections = [
+    { key: '顶刊论文', icon: '📄', cls: 'journal' },
+    { key: '大组动态', icon: '🏛', cls: 'lab' },
+    { key: '商业落地', icon: '🏢', cls: 'biz' },
+    { key: '开源项目', icon: '💻', cls: 'github' },
+  ];
+  const useRadarView = _feedFilter === 'all' && !_activeTopic && Array.isArray(digest._radar_picks);
+
+  if (useRadarView) {
+    const picks = digest._radar_picks || [];
+    const more = digest._more_candidates || [];
+    const modeText = {
+      personalized: '个性化模式',
+      profile_pending: '画像评分生成中',
+      generic: '通用模式',
+    }[digest._recommendation_mode] || '推荐模式';
+    let html = `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin-bottom:14px;color:#4a5568;font-size:13px;line-height:1.7">
+      <b style="color:#2d3748">${modeText}</b> · ${escHtml(digest._recommendation_notice || '')}
+    </div>`;
+
+    if (picks.length) {
+      html += `<div class="section">
+        <div class="section-title">🎯 今日必读 <span class="badge">${picks.length} 篇</span></div>
+        <div class="articles">${picks.map(a => articleCardHtml(a, 'journal', true)).join('')}</div>
+      </div>`;
+    } else {
+      html += `<div class="empty"><div style="font-size:42px">🎯</div><p>今天没有达到精选阈值的文章。</p></div>`;
     }
-    html += `</div></div>`;
+    if (more.length) {
+      html += `<details style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin-bottom:24px">
+        <summary style="cursor:pointer;font-size:14px;font-weight:700;color:#4a5568">补充候选 · ${more.length} 篇（默认不打扰）</summary>
+        <div class="articles" style="margin-top:12px">${more.map(a => articleCardHtml(a, 'journal', true)).join('')}</div>
+      </details>`;
+    }
+    document.getElementById('content').innerHTML = html;
+    return;
+  }
+
+  let html = '';
+  let hasAny = false;
+  for (const sec of sections) {
+    let items = (digest[sec.key] || []).filter(_articleMatchesFilter);
+    items.sort((a, b) => (b.relevance_score||0) - (a.relevance_score||0) || b.score - a.score);
+    if (!items.length) continue;
+    hasAny = true;
+    html += `<div class="section">
+      <div class="section-title">${sec.icon} ${sec.key}<span class="badge">${items.length} 篇</span></div>
+      <div class="articles">${items.map(a => articleCardHtml(a, sec.cls)).join('')}</div>
+    </div>`;
   }
   if (!hasAny) {
     const filterMsg = _feedFilter !== 'all' || _activeTopic
       ? `当前过滤条件下没有文章，<a href="javascript:setFeedFilter('all')" style="color:#667eea">查看全部</a>`
-      : (_currentUser
-        ? `暂时没有可推荐文章。可以先添加/细化研究方向，或等待每日任务更新${_currentUser?.is_admin ? '，管理员也可以点击「更新情报」手动刷新' : ''}。`
-        : `暂时没有可推荐文章。注册/登录并填写研究方向后，系统会按你的方向生成每日 5-10 篇推荐。`);
+      : `暂时没有可推荐文章。注册/登录并填写研究方向后，系统会按你的方向生成每日 3-5 篇推荐。`;
     html = `<div class="empty"><div style="font-size:48px">📭</div><p>${filterMsg}</p></div>`;
   }
   document.getElementById('content').innerHTML = html;
@@ -7131,11 +7306,13 @@ class Handler(BaseHTTPRequestHandler):
 
             # 附加个性化数据（登录用户）
             user = _get_session(self)
+            has_profiles_for_radar = False
             if user:
                 from db import (get_research_profiles, get_user_relevance_batch,
                                 get_subscribed_domains, get_conn as _gc)
                 profiles = get_research_profiles(user["email"], DB_PATH)
                 subscribed = get_subscribed_domains(user["email"], DB_PATH)
+                has_profiles_for_radar = bool(profiles)
 
                 # 收集本次 digest 所有文章 id 及 domain_tags
                 all_articles = []
@@ -7178,6 +7355,7 @@ class Handler(BaseHTTPRequestHandler):
                 digest["_subscribed_domains"] = subscribed
                 digest["_has_profiles"] = bool(profiles)
 
+            attach_radar_recommendations(digest, has_profiles_for_radar)
             self.send_json({"digest": digest, "stats": db_stats})
 
         elif path == "/api/digest/for-skill":
