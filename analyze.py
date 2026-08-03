@@ -7,12 +7,17 @@ AI分析模块（使用DeepSeek API）
 import os
 import re
 import json
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ImportError:  # 允许纯统计功能在未安装 OpenAI SDK 时运行
+    OpenAI = None
 from db import (get_top_posts, get_recent_articles,
                 update_quality_score, save_title_suggestions, stats)
 
 
 def get_client():
+    if OpenAI is None:
+        raise ValueError("请先安装 openai 包，或配置包含该依赖的运行环境")
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
         raise ValueError("请设置环境变量 DEEPSEEK_API_KEY")
@@ -830,6 +835,109 @@ def _check_concept_ages_openalex(concepts: list,
     return cache
 
 
+_AI_X_DOMAIN_LABELS = {
+    'AI', 'Computer Vision', 'Machine Learning', 'Robotics', 'Neural Networks',
+    'Image & Video', 'Signal Processing', 'Statistics & ML',
+    'Information Retrieval', 'Human-Computer Interaction',
+}
+
+_AI_X_SOURCE_MARKERS = (
+    'arxiv cs.', 'arxiv stat.ml', 'arxiv eess.iv', 'arxiv eess.sp',
+    'medical image analysis', 'ieee transactions on medical imaging',
+    'the lancet digital health', 'nejm ai', 'npj digital medicine',
+)
+
+_AI_X_TEXT_TERMS = {
+    'ai', 'artificial intelligence', 'machine learning', 'deep learning',
+    'neural', 'neural network', 'foundation model', 'large language model',
+    'llm', 'llms', 'multimodal', 'computer vision', 'vision-language',
+    'transformer', 'diffusion', 'generative', 'self-supervised',
+    'reinforcement learning', 'federated learning', 'representation learning',
+    'graph neural', 'knowledge graph', 'agent', 'agents', 'robotic', 'robotics',
+    'segmentation', 'classification', 'prediction model', 'predictive model',
+    'algorithm', 'embedding', 'retrieval', 'natural language processing',
+}
+
+_CONCEPT_METHOD_TERMS = {
+    'ai', 'artificial', 'intelligence', 'machine', 'learning', 'deep', 'neural',
+    'llm', 'llms', 'language', 'multimodal', 'vision', 'transformer',
+    'diffusion', 'generative', 'foundation', 'agent', 'agents', 'robotic',
+    'robotics', 'segmentation', 'classification', 'prediction', 'predictive',
+    'algorithm', 'embedding', 'retrieval', 'graph', 'representation',
+    'self-supervised', 'federated',
+}
+
+_CLINICAL_FRAGMENT_WORDS = {
+    'patient', 'patients', 'older', 'adult', 'adults', 'persistent', 'atrial',
+    'fibrillation', 'weight', 'loss', 'disease', 'diseases', 'kidney',
+    'glomerular', 'rehabilitation', 'intensive', 'care', 'survivors',
+    'summary', 'research', 'chronic', 'clinical', 'trial', 'treatment',
+    'therapy', 'mortality', 'risk', 'cancer', 'infection', 'syndrome',
+}
+
+
+def _json_list(value) -> list:
+    try:
+        parsed = json.loads(value or "[]")
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+def _is_ai_x_article(article: dict) -> bool:
+    """只让 AI/计算方法相关语料进入冒头信号，避免普通临床标题误报。"""
+    source_name = (article.get('source_name') or '').lower()
+    if any(marker in source_name for marker in _AI_X_SOURCE_MARKERS):
+        return True
+
+    tags = _json_list(article.get('domain_tags'))
+    if tags and str(tags[0]) in _AI_X_DOMAIN_LABELS:
+        return True
+
+    haystack = " ".join([
+        article.get('title') or '',
+        article.get('content') or '',
+        " ".join(str(t) for t in tags),
+    ]).lower()
+    return any(
+        re.search(r'(?<![a-z0-9])' + re.escape(term) + r'(?![a-z0-9])', haystack)
+        for term in _AI_X_TEXT_TERMS
+    )
+
+
+def _is_concept_phrase(phrase: str) -> bool:
+    words = [w.lower() for w in re.findall(r'[A-Za-z][A-Za-z0-9\-]*', phrase)]
+    if len(words) < 2:
+        return False
+    if not any(w in _CONCEPT_METHOD_TERMS for w in words):
+        return False
+    if all(w in _CLINICAL_FRAGMENT_WORDS for w in words):
+        return False
+    return True
+
+
+def _dedupe_overlapping_concepts(results: list) -> list:
+    """同一批代表论文产生多个重叠短语时，只保留更像方法概念的一个。"""
+    deduped = []
+    seen_article_sets = []
+    for r in results:
+        words = set((r.get('concept') or '').lower().split())
+        article_ids = frozenset(a.get('id') for a in r.get('articles', []) if a.get('id') is not None)
+        duplicate = False
+        for kept, kept_ids in zip(deduped, seen_article_sets):
+            kept_words = set((kept.get('concept') or '').lower().split())
+            same_evidence = article_ids and article_ids == kept_ids
+            overlap = words and kept_words and len(words & kept_words) / max(len(words | kept_words), 1) >= 0.5
+            if same_evidence or overlap:
+                duplicate = True
+                break
+        if duplicate:
+            continue
+        deduped.append(r)
+        seen_article_sets.append(article_ids)
+    return deduped
+
+
 def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
                              recent_days: int = 14,
                              baseline_days: int = 60,
@@ -855,6 +963,8 @@ def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
         'system','network','learning','training','evaluation','benchmark',
         'analysis','results','performance','dataset','data','task','tasks',
         'show','shows','achieve','achieves','propose','proposed','present',
+        'summary','older','patients','patient','persistent','due','disease',
+        'diseases','research','clinical','trial','treatment','therapy',
     }
 
     def extract_ngrams(title: str) -> list:
@@ -899,8 +1009,8 @@ def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
 
     conn = get_conn(db_path)
     rows = conn.execute("""
-        SELECT id, title, source_name, quality_score, url, fetched_at,
-               COALESCE(published_at, '') as published_at
+        SELECT id, title, content, source_name, category, domain_tags,
+               quality_score, url, fetched_at, COALESCE(published_at, '') as published_at
         FROM articles
         WHERE fetched_at >= datetime('now', ?)
           AND title IS NOT NULL AND title != ''
@@ -934,21 +1044,29 @@ def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
         except Exception:
             continue
 
+        a = dict(r)
+        if not _is_ai_x_article(a):
+            continue
+        a.pop('content', None)
+
         src_weight = _TOP_SOURCES.get(r['source_name'] or '', 1.0)
         q = float(r['quality_score']) if r['quality_score'] else 5.0
         weight = src_weight * (q / 7.0)
 
         ngrams = extract_ngrams(r['title'] or '')
-        a = dict(r)
 
         if t >= cutoff:
             for ng in ngrams:
+                if not _is_concept_phrase(ng):
+                    continue
                 recent_ngrams[ng]['count'] += 1
                 recent_ngrams[ng]['weight'] += weight
                 if len(recent_ngrams[ng]['articles']) < 3:
                     recent_ngrams[ng]['articles'].append(a)
         elif t >= baseline_start:
             for ng in ngrams:
+                if not _is_concept_phrase(ng):
+                    continue
                 baseline_ngrams[ng] += weight
 
     # 归一化基线到14天
@@ -994,6 +1112,7 @@ def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
 
     results.sort(key=lambda x: x['breakout_score'], reverse=True)
     results = [r for r in results if r['breakout_score'] >= 1.5]
+    results = _dedupe_overlapping_concepts(results)
     candidates = results[:top_n * 2]  # 多查一些，过滤后再取 top_n
 
     # ── 过滤3：OpenAlex 验证概念真实年龄 ──────────────────────
@@ -1005,7 +1124,7 @@ def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
             oldest = ages.get(r['concept'])
             r['openalex_oldest_year'] = oldest
             r['evidence_count'] = len(r.get('articles') or [])
-            r['scope_note'] = '本站近14天抓取语料 vs 前46天基线；OpenAlex 仅按标题做年龄校验'
+            r['scope_note'] = '已先过滤 AI/计算方法相关语料；本站近14天 vs 前46天基线；OpenAlex 仅按标题做年龄校验'
             # 如果 OpenAlex 能找到 2022 年前的论文 → 成熟概念，过滤
             if oldest is not None and oldest < 2022:
                 continue
@@ -1021,7 +1140,7 @@ def detect_emerging_concepts(db_path: str = "corpus/corpus.db",
     for r in candidates:
         r['evidence_count'] = len(r.get('articles') or [])
         r['confidence'] = '低'
-        r['scope_note'] = '本站近14天抓取语料 vs 前46天基线'
+        r['scope_note'] = '已先过滤 AI/计算方法相关语料；本站近14天 vs 前46天基线'
     return candidates[:top_n]
 
 
@@ -1046,7 +1165,8 @@ def explain_emerging_concepts(concepts: list = None,
             cached = json.loads(row['value'])
             concepts_cached = cached.get('concepts') or []
             has_confidence = all('confidence' in c for c in concepts_cached)
-            if has_confidence and time.time() - cached.get('ts', 0) < 43200:  # 12小时
+            cache_version = int(cached.get('version') or 0)
+            if cache_version >= 2 and has_confidence and time.time() - cached.get('ts', 0) < 43200:  # 12小时
                 return cached['concepts']
         except Exception:
             pass
@@ -1092,7 +1212,7 @@ def explain_emerging_concepts(concepts: list = None,
     except Exception as e:
         print(f"⚠ 新概念解释生成失败: {e}")
 
-    payload = json.dumps({'ts': time.time(), 'concepts': concepts}, ensure_ascii=False)
+    payload = json.dumps({'version': 2, 'ts': time.time(), 'concepts': concepts}, ensure_ascii=False)
     conn = get_conn(db_path)
     conn.execute(
         "INSERT OR REPLACE INTO app_state (key, value) VALUES ('emerging_concepts', ?)",

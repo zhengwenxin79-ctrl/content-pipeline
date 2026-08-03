@@ -2159,12 +2159,12 @@ HTML = """<!DOCTYPE html>
     </div>
     <div class="stats-row" id="statsRow"></div>
 
-    <!-- 近期冒头信号 -->
+    <!-- AI+X 近期冒头信号 -->
     <div id="emergingSection" style="margin-bottom:20px;display:none">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
         <span style="font-size:14px;font-weight:700;color:#2d3748">
-          ⚡ 近期冒头信号
-          <span style="font-size:11px;font-weight:400;color:#a0aec0;margin-left:6px">· 本站近14天语料信号，不等同于全网新概念</span>
+          ⚡ AI+X 近期冒头信号
+          <span style="font-size:11px;font-weight:400;color:#a0aec0;margin-left:6px">· 先过滤 AI/计算方法相关语料，不等同于全网新概念</span>
         </span>
         <button onclick="loadEmerging()" style="background:none;border:none;color:#a0aec0;font-size:18px;cursor:pointer" title="刷新">⟳</button>
       </div>
