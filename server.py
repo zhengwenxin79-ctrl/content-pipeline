@@ -7,6 +7,7 @@
 import os
 import json
 import logging
+import re
 import secrets
 import threading
 import subprocess
@@ -1529,6 +1530,7 @@ def get_digest_data(days=2):
             "date": date_display,
             "title_zh": r["title_zh"] or "",
         }
+        attach_publication_signals(article)
         if r["reading_brief_json"]:
             try:
                 article["reading_brief"] = json.loads(r["reading_brief_json"])
@@ -1602,9 +1604,152 @@ def _has_negative_feedback(article: dict) -> bool:
     return bool(feedback & {"irrelevant", "hide", "read", "skip"})
 
 
+TOP_JOURNAL_MARKERS = {
+    "nature medicine": "Nature Medicine",
+    "nature biomedical engineering": "Nature Biomedical Engineering",
+    "the lancet digital health": "The Lancet Digital Health",
+    "lancet digital health": "The Lancet Digital Health",
+    "nejm ai": "NEJM AI",
+    "npj digital medicine": "npj Digital Medicine",
+    "jama network open": "JAMA Network Open",
+    "medical image analysis": "Medical Image Analysis",
+    "ieee transactions on medical imaging": "IEEE TMI",
+    "ieee journal of biomedical and health informatics": "IEEE JBHI",
+}
+
+TOP_CONFERENCE_MARKERS = {
+    "neurips": "NeurIPS", "nips": "NeurIPS", "iclr": "ICLR",
+    "icml": "ICML", "cvpr": "CVPR", "miccai": "MICCAI",
+    "acl": "ACL", "emnlp": "EMNLP", "kdd": "KDD",
+    "aaai": "AAAI", "ijcai": "IJCAI", "chi": "CHI",
+    "sigir": "SIGIR",
+}
+
+ACCEPTED_PREPRINT_PATTERNS = (
+    "accepted at", "accepted by", "accepted to", "to appear in",
+    "published in", "in press", "conference version", "journal version",
+    "camera-ready", "proceedings of",
+)
+
+TIER_WEIGHTS = {
+    "journal_top": 1.2,
+    "conference_top": 1.1,
+    "accepted_preprint": 0.9,
+    "industry": 0.2,
+    "github": 0.1,
+    "preprint": -1.0,
+    "other": 0.0,
+}
+
+
+def _article_text_for_tier(article: dict) -> str:
+    return " ".join([
+        article.get("title") or "",
+        article.get("summary") or "",
+        article.get("source") or "",
+        article.get("url") or "",
+        " ".join(str(t) for t in article.get("domain_tags") or []),
+    ]).lower()
+
+
+def infer_publication_signal(article: dict) -> dict:
+    source = (article.get("source") or "").lower()
+    source_type = (article.get("source_type") or "").lower()
+    url = (article.get("url") or "").lower()
+    text = _article_text_for_tier(article)
+    is_arxiv = "arxiv" in source or "arxiv.org" in url
+
+    if source_type == "github" or "github.com" in url or source == "github":
+        return {
+            "publication_tier": "github",
+            "publication_label": "开源项目",
+            "venue_signal": "GitHub",
+            "venue_confidence": "high",
+            "venue_reason": "来源为 GitHub 项目",
+        }
+
+    if not is_arxiv:
+        for marker, label in TOP_JOURNAL_MARKERS.items():
+            if marker in source:
+                return {
+                    "publication_tier": "journal_top",
+                    "publication_label": "顶刊",
+                    "venue_signal": label,
+                    "venue_confidence": "high",
+                    "venue_reason": f"来源为 {label}",
+                }
+
+    for marker, label in TOP_CONFERENCE_MARKERS.items():
+        if re.search(rf"(?<![a-z0-9]){re.escape(marker)}(?![a-z0-9])", text):
+            tier = "accepted_preprint" if is_arxiv else "conference_top"
+            return {
+                "publication_tier": tier,
+                "publication_label": "已接收预印本" if is_arxiv else "顶会",
+                "venue_signal": label,
+                "venue_confidence": "medium" if is_arxiv else "high",
+                "venue_reason": f"文本中出现 {label} 发表/会议信号",
+            }
+
+    if is_arxiv:
+        for pattern in ACCEPTED_PREPRINT_PATTERNS:
+            if pattern in text:
+                return {
+                    "publication_tier": "accepted_preprint",
+                    "publication_label": "已接收预印本",
+                    "venue_signal": "发表版本待核验",
+                    "venue_confidence": "low",
+                    "venue_reason": f"文本中出现 “{pattern}” 接收/发表信号",
+                }
+        return {
+            "publication_tier": "preprint",
+            "publication_label": "普通预印本",
+            "venue_signal": "arXiv",
+            "venue_confidence": "low",
+            "venue_reason": "arXiv 预印本，未识别到顶刊/顶会接收证据",
+        }
+
+    if any(k in source for k in ("stat news", "mit technology", "healthcare it", "techcrunch", "venturebeat")):
+        return {
+            "publication_tier": "industry",
+            "publication_label": "产业信号",
+            "venue_signal": article.get("source") or "industry",
+            "venue_confidence": "medium",
+            "venue_reason": "行业媒体或产业来源",
+        }
+
+    return {
+        "publication_tier": "other",
+        "publication_label": "研究候选",
+        "venue_signal": article.get("source") or "",
+        "venue_confidence": "low",
+        "venue_reason": "未识别到顶刊、顶会或接收证据",
+    }
+
+
+def attach_publication_signals(article: dict):
+    signal = infer_publication_signal(article)
+    article.update(signal)
+    article["publication_weight"] = TIER_WEIGHTS.get(signal["publication_tier"], 0.0)
+    article["is_preprint"] = signal["publication_tier"] == "preprint"
+    article["is_accepted_preprint"] = signal["publication_tier"] == "accepted_preprint"
+    return article
+
+
+def radar_score(article: dict, has_profiles: bool, has_relevance_scores: bool) -> float:
+    score = float(article.get("score") or 0)
+    rel = article.get("relevance_score")
+    rel = float(rel) if rel is not None else None
+    rel_bonus = 0.0
+    if has_profiles and has_relevance_scores and rel is not None:
+        rel_bonus = max(0.0, (rel - 5.0) * 0.35)
+    priority_bonus = 0.45 if _brief_priority_value(article).startswith("精读") else 0.0
+    return round(score + float(article.get("publication_weight") or 0) + rel_bonus + priority_bonus, 3)
+
+
 RADAR_PICK_LIMIT = 5
 RADAR_MORE_LIMIT = 12
 RADAR_PER_CATEGORY_LIMIT = 2
+RADAR_PREPRINT_MORE_LIMIT = 2
 
 
 def _is_radar_pick(article: dict, has_profiles: bool, has_relevance_scores: bool) -> bool:
@@ -1615,16 +1760,29 @@ def _is_radar_pick(article: dict, has_profiles: bool, has_relevance_scores: bool
     rel = article.get("relevance_score")
     rel = float(rel) if rel is not None else None
     priority = _brief_priority_value(article)
+    tier = article.get("publication_tier") or "other"
+    rscore = radar_score(article, has_profiles, has_relevance_scores)
 
     if has_profiles and has_relevance_scores:
+        if tier == "preprint":
+            return (
+                (rel is not None and rel >= 8.5 and score >= 8.0)
+                or (rel is not None and rel >= 8 and priority.startswith("精读"))
+            )
         return (
-            (rel is not None and rel >= 8)
-            or (rel is not None and rel >= 7 and score >= 8.0)
-            or (rel is not None and rel >= 6.5 and priority.startswith("精读"))
+            tier in {"journal_top", "conference_top", "accepted_preprint"}
+            and (
+                (rel is not None and rel >= 8)
+                or (rel is not None and rel >= 7 and score >= 7.6)
+                or (rel is not None and rel >= 6.5 and priority.startswith("精读"))
+                or rscore >= 8.7
+            )
         )
 
     # 无画像或画像刚创建但尚未完成个性化评分时，只展示高质量通用候选。
-    return score >= 8.7
+    if tier == "preprint":
+        return score >= 9.2
+    return tier in {"journal_top", "conference_top", "accepted_preprint"} and rscore >= 8.7
 
 
 def _is_more_candidate(article: dict, has_profiles: bool, has_relevance_scores: bool) -> bool:
@@ -1634,11 +1792,20 @@ def _is_more_candidate(article: dict, has_profiles: bool, has_relevance_scores: 
     score = float(article.get("score") or 0)
     rel = article.get("relevance_score")
     rel = float(rel) if rel is not None else None
+    tier = article.get("publication_tier") or "other"
+    rscore = radar_score(article, has_profiles, has_relevance_scores)
 
     if has_profiles and has_relevance_scores:
-        return (rel is not None and rel >= 5.5) or score >= 8.0
+        if tier == "preprint":
+            return (rel is not None and rel >= 7.5 and score >= 7.5) or score >= 8.7
+        return (
+            tier in {"journal_top", "conference_top", "accepted_preprint"}
+            and ((rel is not None and rel >= 5.5) or rscore >= 8.0)
+        )
 
-    return score >= 8.0
+    if tier == "preprint":
+        return score >= 8.8
+    return tier in {"journal_top", "conference_top", "accepted_preprint"} and rscore >= 8.0
 
 
 def attach_radar_recommendations(digest: dict, has_profiles: bool = False):
@@ -1647,11 +1814,18 @@ def attach_radar_recommendations(digest: dict, has_profiles: bool = False):
     has_relevance_scores = any(a.get("relevance_score") is not None for a in articles)
 
     def sort_key(a: dict):
+        tier_rank = {
+            "journal_top": 5,
+            "conference_top": 4,
+            "accepted_preprint": 4,
+            "industry": 2,
+            "github": 2,
+            "other": 1,
+            "preprint": 0,
+        }.get(a.get("publication_tier") or "other", 1)
         rel = a.get("relevance_score")
         rel_val = float(rel) if rel is not None else -1.0
-        score = float(a.get("score") or 0)
-        priority_bonus = 1.5 if _brief_priority_value(a).startswith("精读") else 0
-        return (rel_val + priority_bonus, score)
+        return (radar_score(a, has_profiles, has_relevance_scores), tier_rank, rel_val, float(a.get("score") or 0))
 
     sorted_articles = sorted(articles, key=sort_key, reverse=True)
     picks = []
@@ -1668,11 +1842,20 @@ def attach_radar_recommendations(digest: dict, has_profiles: bool = False):
             break
 
     picked_ids = {a["id"] for a in picks}
-    more = [
-        a for a in sorted_articles
-        if a["id"] not in picked_ids
-        and _is_more_candidate(a, has_profiles, has_relevance_scores)
-    ][:RADAR_MORE_LIMIT]
+    more = []
+    preprint_more = 0
+    for a in sorted_articles:
+        if a["id"] in picked_ids:
+            continue
+        if not _is_more_candidate(a, has_profiles, has_relevance_scores):
+            continue
+        if a.get("publication_tier") == "preprint":
+            if preprint_more >= RADAR_PREPRINT_MORE_LIMIT:
+                continue
+            preprint_more += 1
+        more.append(a)
+        if len(more) >= RADAR_MORE_LIMIT:
+            break
 
     if has_profiles and has_relevance_scores:
         mode = "personalized"
@@ -1696,6 +1879,14 @@ def attach_radar_recommendations(digest: dict, has_profiles: bool = False):
     digest["_recommendation_notice"] = notice
     digest["_has_relevance_scores"] = has_relevance_scores
     digest["_radar_pick_count"] = len(picks)
+    digest["_candidate_quality_summary"] = {
+        "total": len(articles),
+        "top_journal": sum(1 for a in articles if a.get("publication_tier") == "journal_top"),
+        "top_conference": sum(1 for a in articles if a.get("publication_tier") == "conference_top"),
+        "accepted_preprint": sum(1 for a in articles if a.get("publication_tier") == "accepted_preprint"),
+        "preprint": sum(1 for a in articles if a.get("publication_tier") == "preprint"),
+        "scored_ge_80": sum(1 for a in articles if float(a.get("score") or 0) >= 8.0),
+    }
 
 
 HTML = """<!DOCTYPE html>
@@ -3549,6 +3740,23 @@ function articleCardHtml(a, cls, showCategory=false) {
   const catBadge = showCategory && a._category
     ? `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#f7fafc;color:#718096;border:1px solid #e2e8f0">${escHtml(a._category)}</span>`
     : '';
+  const tierStyle = {
+    journal_top: 'background:#f0fff4;color:#276749;border:1px solid #c6f6d5',
+    conference_top: 'background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe',
+    accepted_preprint: 'background:#fffbeb;color:#92400e;border:1px solid #f6e05e',
+    preprint: 'background:#f7fafc;color:#718096;border:1px solid #e2e8f0',
+    industry: 'background:#ebf8ff;color:#2b6cb0;border:1px solid #bee3f8',
+    github: 'background:#f0fff4;color:#276749;border:1px solid #c6f6d5',
+  }[a.publication_tier] || 'background:#f7fafc;color:#718096;border:1px solid #e2e8f0';
+  const tierBadge = a.publication_label
+    ? `<span title="${escHtml(a.venue_reason || '')}" style="font-size:11px;padding:2px 8px;border-radius:10px;${tierStyle};white-space:nowrap">${escHtml(a.publication_label)}</span>`
+    : '';
+  const venueBadge = a.venue_signal && a.publication_tier !== 'preprint'
+    ? `<span style="font-size:11px;color:#718096">${escHtml(a.venue_signal)}</span>`
+    : '';
+  const preprintNote = a.publication_tier === 'preprint'
+    ? `<span style="font-size:11px;color:#a0aec0">预印本，未识别到顶刊/顶会接收证据</span>`
+    : '';
   const starText = a.is_starred ? '★' : '☆';
   const starStyle = a.is_starred ? 'opacity:1;color:#f6ad55' : 'opacity:0.4';
   return `<div class="article-card ${cls || ''}" id="acard-${a.id}">
@@ -3571,6 +3779,9 @@ function articleCardHtml(a, cls, showCategory=false) {
               来源：${escHtml(a.source || '未知')} · ${a.date || '日期未知'} · 质量分 ${(parseFloat(a.score)||0).toFixed(1)}
               <span style="color:#553c9a">个人匹配度 ${matchText}</span>
               <span class="priority-chip">${escHtml(priority)}</span>
+              ${tierBadge}
+              ${venueBadge}
+              ${preprintNote}
               ${domainBadge}
               ${catBadge}
             </div>
@@ -3639,7 +3850,12 @@ function renderDigest(digest) {
         <div class="articles">${picks.map(a => articleCardHtml(a, 'journal', true)).join('')}</div>
       </div>`;
     } else {
-      html += `<div class="empty"><div style="font-size:42px">🎯</div><p>今天没有达到精选阈值的文章。</p></div>`;
+      const qs = digest._candidate_quality_summary || {};
+      html += `<div class="empty"><div style="font-size:42px">🎯</div><p>今天没有达到精选阈值的文章。</p>
+        <div style="margin-top:10px;font-size:12px;color:#718096;line-height:1.8">
+          已抓取候选 ${qs.total || 0} 篇 · 顶刊 ${qs.top_journal || 0} 篇 · 顶会 ${qs.top_conference || 0} 篇 · 已接收预印本 ${qs.accepted_preprint || 0} 篇 · 普通预印本 ${qs.preprint || 0} 篇 · 8分以上 ${qs.scored_ge_80 || 0} 篇
+        </div>
+      </div>`;
     }
     if (more.length) {
       html += `<details style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin-bottom:24px">
