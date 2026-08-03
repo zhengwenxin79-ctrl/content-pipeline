@@ -8,6 +8,7 @@ import os
 import json
 import logging
 import re
+import gzip
 import secrets
 import threading
 import subprocess
@@ -1491,21 +1492,42 @@ def _is_medical(title: str, content: str, source_name: str) -> bool:
     return any(kw.lower() in text for kw in MEDICAL_KEYWORDS)
 
 
-def get_digest_data(days=2):
+def get_digest_data(days=2, include_content=False, include_briefs=False,
+                    run_background_tasks=False, per_category_limit=None):
     """从数据库读取分类后的 AI+X 候选文章，附带日期和英文标题翻译。"""
     conn = get_conn(DB_PATH)
-    rows = conn.execute("""
-        SELECT id, title, content, source, source_name, url, category, quality_score,
-               published_at, fetched_at, COALESCE(ai_summary,'') as ai_summary,
-               COALESCE(title_zh,'') as title_zh,
-               COALESCE(reading_brief_json,'') as reading_brief_json
-        FROM articles
-        WHERE fetched_at >= datetime('now', ?)
-          AND typeof(quality_score) IN ('real','integer')
-          AND quality_score >= 5.5
-          AND category != ''
-        ORDER BY quality_score DESC
-    """, (f'-{days} days',)).fetchall()
+    content_select = "content" if include_content else "'' as content"
+    brief_select = "COALESCE(reading_brief_json,'') as reading_brief_json" if include_briefs else "'' as reading_brief_json"
+    where_sql = """
+        fetched_at >= datetime('now', ?)
+        AND typeof(quality_score) IN ('real','integer')
+        AND quality_score >= 5.5
+        AND category != ''
+    """
+    select_sql = f"""
+        id, title, {content_select}, source, source_name, url, category, quality_score,
+        published_at, fetched_at, COALESCE(ai_summary,'') as ai_summary,
+        COALESCE(title_zh,'') as title_zh,
+        {brief_select}
+    """
+    if per_category_limit:
+        rows = conn.execute(f"""
+            SELECT * FROM (
+                SELECT {select_sql},
+                       ROW_NUMBER() OVER (PARTITION BY category ORDER BY quality_score DESC) AS _rn
+                FROM articles
+                WHERE {where_sql}
+            )
+            WHERE _rn <= ?
+            ORDER BY quality_score DESC
+        """, (f'-{days} days', int(per_category_limit))).fetchall()
+    else:
+        rows = conn.execute(f"""
+            SELECT {select_sql}
+            FROM articles
+            WHERE {where_sql}
+            ORDER BY quality_score DESC
+        """, (f'-{days} days',)).fetchall()
     conn.close()
 
     # 已通过 score_articles 的「医疗+AI 双重」LLM 评分（quality_score>=5.5），
@@ -1522,7 +1544,6 @@ def get_digest_data(days=2):
             "id": r["id"],
             "title": r["title"],
             "summary": r["ai_summary"] or "",
-            "_raw_content": raw_content,  # 仅内存中用于生成摘要，序列化前删除
             "source": r["source_name"],
             "source_type": r["source"],
             "url": r["url"] or "",
@@ -1530,8 +1551,10 @@ def get_digest_data(days=2):
             "date": date_display,
             "title_zh": r["title_zh"] or "",
         }
+        if include_content:
+            article["_raw_content"] = raw_content  # 仅内存中用于生成摘要，序列化前删除
         attach_publication_signals(article)
-        if r["reading_brief_json"]:
+        if include_briefs and r["reading_brief_json"]:
             try:
                 article["reading_brief"] = json.loads(r["reading_brief_json"])
             except Exception:
@@ -1541,23 +1564,24 @@ def get_digest_data(days=2):
 
     # 统计需要生成摘要的文章数（排除已失败占位符，避免无限重试）
     need_summary = [a for a in all_articles
-                    if not a.get("ai_summary") or a["ai_summary"] == _SUMMARY_FAILED]
-    generating_summaries = len(need_summary) > 0 and _summary_lock.locked()
+                    if not a.get("summary") or a["summary"] == _SUMMARY_FAILED]
+    generating_summaries = run_background_tasks and len(need_summary) > 0 and _summary_lock.locked()
 
     # 已有缓存的先同步到 summary 字段
     for a in all_articles:
         if a.get("ai_summary") and not a.get("summary"):
             a["summary"] = a["ai_summary"]
 
-    if generating_summaries:
+    if run_background_tasks and need_summary and include_content and not _summary_lock.locked():
         # 后台线程异步生成剩余文章的摘要，不阻塞接口返回
         import threading
         t = threading.Thread(target=generate_ai_summaries_and_cache, args=(all_articles,), daemon=True)
         t.start()
+        generating_summaries = True
 
     # 翻译英文标题：有缓存直接用，没缓存的后台异步翻译并存 DB
     need_translate = [a for a in all_articles if not a.get("title_zh")]
-    if need_translate:
+    if run_background_tasks and need_translate:
         import threading as _threading
         def _do_translate(articles_to_translate):
             new_trans = translate_titles(articles_to_translate)
@@ -1579,6 +1603,25 @@ def get_digest_data(days=2):
     result["_generating_summaries"] = generating_summaries
     result["_need_summary_count"] = len(need_summary)
     return result
+
+
+def get_digest_category_counts(days=7):
+    conn = get_conn(DB_PATH)
+    rows = conn.execute("""
+        SELECT category, COUNT(*) AS n
+        FROM articles
+        WHERE fetched_at >= datetime('now', ?)
+          AND typeof(quality_score) IN ('real','integer')
+          AND quality_score >= 5.5
+          AND category != ''
+        GROUP BY category
+    """, (f'-{days} days',)).fetchall()
+    conn.close()
+    counts = {key: 0 for key in DIGEST_CATEGORY_KEYS}
+    for r in rows:
+        cat = r["category"] if r["category"] in counts else "未分类"
+        counts[cat] = counts.get(cat, 0) + int(r["n"] or 0)
+    return counts
 
 
 def _all_digest_articles(digest: dict) -> list:
@@ -1887,6 +1930,43 @@ def attach_radar_recommendations(digest: dict, has_profiles: bool = False):
         "preprint": sum(1 for a in articles if a.get("publication_tier") == "preprint"),
         "scored_ge_80": sum(1 for a in articles if float(a.get("score") or 0) >= 8.0),
     }
+
+
+DIGEST_CATEGORY_KEYS = ("顶刊论文", "大组动态", "商业落地", "开源项目", "未分类")
+DIGEST_ARTICLE_CARD_FIELDS = {
+    "id", "title", "summary", "source", "source_type", "url", "score", "date",
+    "title_zh", "reading_brief", "_category", "domain_tags",
+    "relevance_score", "relevance_reason", "feedback", "is_starred",
+    "publication_tier", "publication_label", "venue_signal", "venue_confidence",
+    "venue_reason", "publication_weight", "is_preprint", "is_accepted_preprint",
+}
+
+
+def _slim_digest_article(article: dict) -> dict:
+    """只保留首页文章卡片和 brief 入口需要的字段，避免 digest 响应膨胀。"""
+    return {k: article[k] for k in DIGEST_ARTICLE_CARD_FIELDS if k in article}
+
+
+def build_slim_digest(digest: dict) -> dict:
+    """首页默认 digest：只发雷达精选和补充候选，分类长列表按需加载。"""
+    slim = {key: [] for key in DIGEST_CATEGORY_KEYS}
+    slim["_is_slim"] = True
+    slim["_full_available"] = True
+    slim["_category_counts"] = digest.get("_category_counts") or {
+        key: len(digest.get(key) or []) for key in DIGEST_CATEGORY_KEYS
+    }
+
+    for key, value in digest.items():
+        if key in DIGEST_CATEGORY_KEYS:
+            continue
+        if key in {"_radar_picks", "_more_candidates"} and isinstance(value, list):
+            slim[key] = [_slim_digest_article(a) for a in value]
+        elif key.startswith("_"):
+            slim[key] = value
+
+    slim.setdefault("_radar_picks", [])
+    slim.setdefault("_more_candidates", [])
+    return slim
 
 
 HTML = """<!DOCTYPE html>
@@ -2970,16 +3050,20 @@ async function _pollSummaries() {
     const res = await fetch('/api/digest');
     const data = await res.json();
     const digest = data.digest || {};
-    // 原地更新各分类文章的摘要
-    ['顶刊论文','大组动态','商业落地','开源项目','未分类'].forEach(sec => {
-      (digest[sec] || []).forEach(a => {
-        const el = document.getElementById('summary-' + a.id);
-        if (!el) return;
-        if (a.summary && el.textContent !== a.summary) {
-          el.textContent = a.summary;
-          el.style.display = 'block';
-        }
-      });
+    // 默认 digest 是 slim，只更新当前页面上存在的文章卡片。
+    forEachDigestArticle(digest, a => {
+      const el = document.getElementById('summary-' + a.id);
+      if (!el) return;
+      if (a.summary && el.textContent !== a.summary) {
+        el.textContent = a.summary;
+        el.style.display = 'block';
+      }
+      const old = findDigestArticle(a.id);
+      if (old) {
+        old.summary = a.summary || old.summary || '';
+        old.title_zh = a.title_zh || old.title_zh || '';
+        old.reading_brief = a.reading_brief || old.reading_brief;
+      }
     });
     const banner = document.getElementById('summaryGeneratingBanner');
     if (digest._generating_summaries) {
@@ -3010,6 +3094,44 @@ let _digestData = null;          // 最新 digest 响应
 let _subscribedDomains = [];     // 用户已订阅的领域
 let _activeTopic = null;         // 当前点击的话题卡片
 let _feedFilter = 'all';         // 'all' | 'direction' | 'topic'
+let _fullDigestPromise = null;   // 完整分类列表按需加载，避免重复请求
+
+function forEachDigestArticle(digest, cb) {
+  if (!digest) return;
+  Object.values(digest).forEach(articles => {
+    if (!Array.isArray(articles)) return;
+    articles.forEach(cb);
+  });
+}
+
+async function ensureFullDigestLoaded() {
+  if (!_digestData || !_digestData._is_slim) return true;
+  if (_fullDigestPromise) return _fullDigestPromise;
+
+  const content = document.getElementById('content');
+  if (content) {
+    content.innerHTML = '<div class="empty"><div style="font-size:36px">⏳</div><p>正在加载完整候选列表…</p></div>';
+  }
+
+  _fullDigestPromise = fetch('/api/digest?full=1')
+    .then(async res => {
+      if (!res.ok) throw new Error('完整候选列表加载失败');
+      const data = await res.json();
+      _digestData = data.digest || {};
+      _subscribedDomains = _digestData._subscribed_domains || _subscribedDomains;
+      renderStats(data.stats || {});
+      return true;
+    })
+    .catch(e => {
+      _fullDigestPromise = null;
+      if (content) {
+        content.innerHTML = `<div class="empty"><p style="color:#e53e3e">完整列表加载失败：${escHtml(e.message)}</p></div>`;
+      }
+      return false;
+    });
+
+  return _fullDigestPromise;
+}
 
 async function loadData() {
   try {
@@ -3027,6 +3149,7 @@ async function loadData() {
   const topicsData = await topicsRes.json();
 
   _digestData = data.digest;
+  _fullDigestPromise = null;
   _subscribedDomains = data.digest._subscribed_domains || [];
 
   renderStats(data.stats);
@@ -3091,6 +3214,10 @@ async function clickTopicCard(name) {
   // 切换：点同一个取消，点不同的切换
   _activeTopic = (_activeTopic === name) ? null : name;
   _feedFilter = _activeTopic ? 'topic-click' : 'all';
+  if (_activeTopic) {
+    const ok = await ensureFullDigestLoaded();
+    if (!ok) return;
+  }
   renderDigest(_digestData);
   // 更新卡片样式
   renderTopicCards(
@@ -3123,7 +3250,7 @@ async function toggleDomainSubscription(name) {
 }
 
 // ── Feed 过滤 ─────────────────────────────────────────────
-function setFeedFilter(filter) {
+async function setFeedFilter(filter) {
   _feedFilter = filter;
   _activeTopic = null;
   ['all','direction','topic'].forEach(f => {
@@ -3134,6 +3261,10 @@ function setFeedFilter(filter) {
     btn.style.color = active ? 'white' : '#718096';
     btn.style.borderColor = active ? '#667eea' : '#e2e8f0';
   });
+  if (filter !== 'all') {
+    const ok = await ensureFullDigestLoaded();
+    if (!ok) return;
+  }
   renderDigest(_digestData);
 }
 
@@ -3864,6 +3995,13 @@ function renderDigest(digest) {
       </details>`;
     }
     document.getElementById('content').innerHTML = html;
+    return;
+  }
+
+  if (digest._is_slim) {
+    document.getElementById('content').innerHTML =
+      '<div class="empty"><div style="font-size:36px">⏳</div><p>正在加载完整候选列表…</p></div>';
+    ensureFullDigestLoaded().then(ok => { if (ok) renderDigest(_digestData); });
     return;
   }
 
@@ -7134,8 +7272,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_json(self, data, status=200):
         body = json.dumps(data, ensure_ascii=False).encode()
+        accept_encoding = self.headers.get("Accept-Encoding", "").lower()
+        use_gzip = "gzip" in accept_encoding and len(body) > 1024
+        if use_gzip:
+            body = gzip.compress(body)
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        if use_gzip:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", len(body))
         self.end_headers()
         self.wfile.write(body)
@@ -7517,8 +7662,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"logged_in": False})
 
         elif path == "/api/digest":
-            digest = get_digest_data(days=7)
+            qs = parse_qs(urlparse(self.path).query)
+            full_digest = (qs.get("full", ["0"])[0] or "").lower() in {"1", "true", "yes"}
+            per_category_limit = 240 if full_digest else 120
+            digest = get_digest_data(
+                days=7,
+                include_content=False,
+                include_briefs=False,
+                run_background_tasks=False,
+                per_category_limit=per_category_limit,
+            )
             db_stats = stats(DB_PATH)
+            digest["_category_counts"] = get_digest_category_counts(days=7)
+            digest["_list_cap_per_category"] = per_category_limit
 
             # 附加个性化数据（登录用户）
             user = _get_session(self)
@@ -7572,6 +7728,8 @@ class Handler(BaseHTTPRequestHandler):
                 digest["_has_profiles"] = bool(profiles)
 
             attach_radar_recommendations(digest, has_profiles_for_radar)
+            if not full_digest:
+                digest = build_slim_digest(digest)
             self.send_json({"digest": digest, "stats": db_stats})
 
         elif path == "/api/digest/for-skill":
