@@ -9,12 +9,14 @@ import json
 import logging
 import re
 import gzip
+import mimetypes
 import secrets
 import threading
 import subprocess
+import zipfile
 from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 from pathlib import Path
 
 # 加载项目 .env（cron / nohup 启动时 bashrc 不会自动加载）
@@ -68,6 +70,17 @@ GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_MODELS_BASE_URL = "https://models.inference.ai.azure.com"
 DB_PATH = os.environ.get("DB_PATH", "corpus/corpus.db")
 XHS_COOKIE = os.environ.get("XHS_COOKIE", "")
+_BENCH_APP = None
+
+
+def _get_bench_app():
+    global _BENCH_APP
+    if _BENCH_APP is None:
+        from bench_analysis.web_app import BenchWebApp
+
+        output_root = Path(os.environ.get("BENCH_OUTPUT_DIR", "bench_analysis_outputs"))
+        _BENCH_APP = BenchWebApp(output_root)
+    return _BENCH_APP
 
 
 def fetch_user_feeds_once():
@@ -7302,10 +7315,165 @@ class Handler(BaseHTTPRequestHandler):
                 break
         return True
 
+    def _send_bench_html(self, content: bytes, status: int = 200):
+        content = content.replace(b'href="/', b'href="/bench/')
+        content = content.replace(b'action="/', b'action="/bench/')
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
+
+    def _redirect_bench(self, path: str):
+        self.send_response(303)
+        self.send_header("Location", "/bench" + path if path.startswith("/") else "/bench/" + path)
+        self.end_headers()
+
+    def _serve_bench_artifact(self, path: str):
+        from bench_analysis.job_paths import JobPaths
+
+        prefix = "/bench/artifact/"
+        if not path.startswith(prefix):
+            self.send_response(404)
+            self.end_headers()
+            return
+        tail = path[len(prefix):]
+        if "/" not in tail:
+            self.send_response(404)
+            self.end_headers()
+            return
+        job_id, relative = tail.split("/", 1)
+        job_id = unquote(job_id)
+        relative = unquote(relative)
+        app = _get_bench_app()
+        base = JobPaths(app.output_root, job_id).job_dir.resolve()
+        if relative == "export.zip" and base.exists():
+            target = base / "export.zip"
+            with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for file_path in base.rglob("*"):
+                    if file_path.is_file() and file_path != target:
+                        archive.write(file_path, file_path.relative_to(base))
+            payload = target.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", f'attachment; filename="{job_id}.zip"')
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        target = (base / relative).resolve()
+        if not str(target).startswith(str(base)) or not target.exists() or not target.is_file():
+            self.send_response(404)
+            self.end_headers()
+            return
+        content_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+        if target.suffix in {".html", ".json", ".txt", ".md"}:
+            content_type = {
+                ".html": "text/html; charset=utf-8",
+                ".json": "application/json; charset=utf-8",
+                ".txt": "text/plain; charset=utf-8",
+                ".md": "text/markdown; charset=utf-8",
+            }[target.suffix]
+        payload = target.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _handle_bench_get(self, path: str):
+        from bench_analysis.web_app import (
+            page,
+            render_compare,
+            render_home,
+            render_job_detail,
+            render_jobs,
+            render_source_review,
+        )
+
+        app = _get_bench_app()
+        rel_path = path[len("/bench"):] or "/"
+        query = urlparse(self.path).query
+        if rel_path == "/":
+            self._send_bench_html(render_home(app))
+            return
+        if rel_path == "/jobs":
+            search_query = parse_qs(query).get("query", [""])[0]
+            self._send_bench_html(render_jobs(app, query=search_query))
+            return
+        if rel_path.startswith("/jobs/"):
+            parts = rel_path.strip("/").split("/")
+            job_id = unquote(parts[1]) if len(parts) >= 2 else ""
+            if len(parts) == 3 and parts[2] == "sources":
+                self._send_bench_html(render_source_review(app, job_id))
+                return
+            if len(parts) == 3 and parts[2] == "compare":
+                self._send_bench_html(render_compare(app, job_id))
+                return
+            self._send_bench_html(render_job_detail(app, job_id))
+            return
+        if rel_path.startswith("/artifact/"):
+            self._serve_bench_artifact(path)
+            return
+        self._send_bench_html(page("页面不存在", "<h1>页面不存在</h1>"), status=404)
+
+    def _handle_bench_post(self, path: str):
+        from bench_analysis.job_runner import JobOptions
+        from bench_analysis.web_app import page, parse_bench_names
+
+        app = _get_bench_app()
+        rel_path = path[len("/bench"):] or "/"
+        if rel_path.startswith("/jobs/"):
+            parts = rel_path.strip("/").split("/")
+            job_id = unquote(parts[1]) if len(parts) >= 2 else ""
+            if len(parts) == 3 and parts[2] == "rerun":
+                new_job_id = app.rerun_job(job_id)
+                if not new_job_id:
+                    self._send_bench_html(page("任务不存在", "<h1>任务不存在</h1>"), status=404)
+                    return
+                self._redirect_bench(f"/jobs/{new_job_id}")
+                return
+            if len(parts) == 3 and parts[2] == "rerun-bench":
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length).decode("utf-8", errors="ignore")
+                data = parse_qs(body)
+                bench_name = data.get("bench_name", [""])[0].strip()
+                if not bench_name:
+                    self._send_bench_html(page("缺少 Bench", "<h1>缺少 Bench</h1>"), status=400)
+                    return
+                new_job_id = app.rerun_job(job_id, bench_names=[bench_name])
+                if not new_job_id:
+                    self._send_bench_html(page("任务不存在", "<h1>任务不存在</h1>"), status=404)
+                    return
+                self._redirect_bench(f"/jobs/{new_job_id}")
+                return
+        if rel_path != "/jobs":
+            self._send_bench_html(page("页面不存在", "<h1>页面不存在</h1>"), status=404)
+            return
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8", errors="ignore")
+        data = parse_qs(body)
+        bench_names = parse_bench_names(data.get("bench_names", [""])[0])
+        if not bench_names:
+            self._send_bench_html(page("缺少 Bench", "<h1>缺少 Bench</h1><p>请至少输入一个 Bench 名称。</p>"), status=400)
+            return
+        options = JobOptions(
+            with_web="with_web" in data,
+            include_general_search="include_general_search" in data,
+            discovery_limit=int(data.get("discovery_limit", ["6"])[0] or 6),
+            fetch_limit=int(data.get("fetch_limit", ["3"])[0] or 3),
+        )
+        job_id = app.start_job(bench_names, options)
+        self._redirect_bench(f"/jobs/{job_id}")
+
     def do_GET(self):
         if not self._rate_check():
             return
         path = urlparse(self.path).path
+
+        if path == "/bench" or path.startswith("/bench/"):
+            self._handle_bench_get(path)
+            return
 
         if path == "/" or path == "/index.html":
             body = HTML.encode()
@@ -8089,6 +8257,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self._rate_check():
+            return
+        path = urlparse(self.path).path
+        if path == "/bench" or path.startswith("/bench/"):
+            self._handle_bench_post(path)
             return
         if self.path == "/api/survey/submit":
             length = int(self.headers.get("Content-Length", 0))

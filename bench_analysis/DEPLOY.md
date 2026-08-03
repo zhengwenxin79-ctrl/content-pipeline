@@ -39,15 +39,29 @@ or copy its command into the platform start-command field.
 
 ## Existing VPS deployment
 
-The existing `deploy.sh` now starts the Bench Analysis Workbench alongside the
-original `server.py` service for a server checkout at:
+The main public service mounts the Bench Analysis Workbench under:
+
+```text
+/bench
+```
+
+On the current production domain, the intended public URL is:
+
+```text
+https://medai.sugarclaw.top/bench
+```
+
+This is the preferred public route because it reuses the existing public service
+and does not require exposing a new port.
+
+The deployment script expects a server checkout at:
 
 ```text
 /opt/content-pipeline
 ```
 
-It pulls `origin/main`, restarts `server.py`, and starts `bench_server.py` when
-`ENABLE_BENCH_SERVER` is not disabled.
+It pulls `origin/main`, restarts `server.py`, and can also start the standalone
+`bench_server.py` service when `ENABLE_BENCH_SERVER` is not disabled.
 
 Example:
 
