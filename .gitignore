@@ -6,6 +6,7 @@ corpus/corpus.db
 
 # 本地运行数据
 wewe-data/
+bench_analysis_outputs/
 
 # 备份文件
 server_副本.py
