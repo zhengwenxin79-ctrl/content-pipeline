@@ -441,6 +441,13 @@ def render_job_detail(app: BenchWebApp, job_id: str) -> bytes:
         brief_link = artifacts.get("brief_html", "")
         profile = _load_profile(job, profile_link)
         paper_analysis = profile.get("paper_analysis", {})
+        artifact_links = []
+        if report_link:
+            artifact_links.append(f'<a href="/artifact/{escape(job_id)}/{escape(report_link)}">HTML</a>')
+        if brief_link:
+            artifact_links.append(f'<a href="/artifact/{escape(job_id)}/{escape(brief_link)}">简报</a>')
+        if profile_link:
+            artifact_links.append(f'<a href="/artifact/{escape(job_id)}/{escape(profile_link)}">JSON</a>')
         run_rows += (
             f"<tr><td>{escape(run.get('bench_name', ''))}</td>"
             f"<td><span class=\"{status_class(run.get('status', ''))}\">{escape(status_label(run.get('status', '')))}</span></td>"
@@ -451,9 +458,7 @@ def render_job_detail(app: BenchWebApp, job_id: str) -> bytes:
             f"<td>{run_summary.get('raw_failures_count', 0)}</td>"
             f"<td>{run_summary.get('warning_count', 0)}</td>"
             f"<td>{run_summary.get('error_count', 0)}</td>"
-            f"<td>{'<a href=\"/artifact/' + escape(job_id) + '/' + escape(report_link) + '\">HTML</a>' if report_link else ''}"
-            f" {'<a href=\"/artifact/' + escape(job_id) + '/' + escape(brief_link) + '\">简报</a>' if brief_link else ''}"
-            f" {'<a href=\"/artifact/' + escape(job_id) + '/' + escape(profile_link) + '\">JSON</a>' if profile_link else ''}</td>"
+            f"<td>{' '.join(artifact_links)}</td>"
             f"<td><form class=\"inline-form\" method=\"post\" action=\"/jobs/{escape(job_id)}/rerun-bench\">"
             f"<input type=\"hidden\" name=\"bench_name\" value=\"{escape(run.get('bench_name', ''))}\">"
             f"<button class=\"secondary\" type=\"submit\">复跑</button></form></td></tr>"
