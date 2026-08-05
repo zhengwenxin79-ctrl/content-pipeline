@@ -7388,6 +7388,8 @@ class Handler(BaseHTTPRequestHandler):
             render_home,
             render_job_detail,
             render_jobs,
+            render_seed_detail,
+            render_seeds,
             render_source_review,
         )
 
@@ -7396,6 +7398,14 @@ class Handler(BaseHTTPRequestHandler):
         query = urlparse(self.path).query
         if rel_path == "/":
             self._send_bench_html(render_home(app))
+            return
+        if rel_path == "/seeds":
+            search_query = parse_qs(query).get("query", [""])[0]
+            self._send_bench_html(render_seeds(app, query=search_query))
+            return
+        if rel_path.startswith("/seeds/"):
+            slug = unquote(rel_path.strip("/").split("/", 1)[1])
+            self._send_bench_html(render_seed_detail(app, slug))
             return
         if rel_path == "/jobs":
             search_query = parse_qs(query).get("query", [""])[0]
@@ -7419,10 +7429,59 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_bench_post(self, path: str):
         from bench_analysis.job_runner import JobOptions
-        from bench_analysis.web_app import page, parse_bench_names
+        from bench_analysis.job_runner import slug_for_input
+        from bench_analysis.source_discovery import source_records_from_urls
+        from bench_analysis.web_app import (
+            _merge_source_records,
+            _source_records_from_seed_items,
+            _urls_from_text,
+            page,
+            parse_bench_names,
+        )
 
         app = _get_bench_app()
         rel_path = path[len("/bench"):] or "/"
+        if rel_path == "/seeds/manual":
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length).decode("utf-8", errors="ignore")
+            data = parse_qs(body)
+            bench_name = data.get("bench_name", [""])[0].strip()
+            if not bench_name:
+                self._send_bench_html(page("缺少 Bench", "<h1>缺少 Bench</h1><p>请填写 Bench 名称。</p>"), status=400)
+                return
+            notes = data.get("notes", [""])[0].strip()
+            urls = _urls_from_text(data.get("source_urls", [""])[0])
+            new_manual_sources = source_records_from_urls(
+                urls,
+                bench_name=bench_name,
+                note=notes or "用户手动补充来源。",
+                discovered_by="manual-ui",
+            )
+            slug = slug_for_input(bench_name)
+            existing = app.store.find_bench_seed(bench_name) or app.store.get_bench_seed(slug)
+            existing_manual_sources = _source_records_from_seed_items(existing.get("manual_sources", [])) if existing else []
+            manual_sources = _merge_source_records(existing_manual_sources, new_manual_sources)
+            seed_slug = existing.get("slug", slug) if existing else slug
+            app.store.upsert_bench_seed(
+                slug=seed_slug,
+                name=existing.get("name", bench_name) if existing else bench_name,
+                aliases=existing.get("aliases", []) if existing else [],
+                manual_sources=manual_sources,
+                notes=notes,
+            )
+            if "with_web" not in data:
+                self._redirect_bench(f"/seeds/{seed_slug}")
+                return
+            options = JobOptions(
+                with_web=True,
+                include_general_search=False,
+                discovery_limit=8,
+                fetch_limit=5,
+                manual_sources={bench_name.lower(): [source.__dict__ for source in manual_sources]},
+            )
+            job_id = app.start_job([bench_name], options)
+            self._redirect_bench(f"/jobs/{job_id}")
+            return
         if rel_path.startswith("/jobs/"):
             parts = rel_path.strip("/").split("/")
             job_id = unquote(parts[1]) if len(parts) >= 2 else ""
