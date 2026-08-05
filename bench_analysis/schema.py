@@ -120,6 +120,34 @@ class LocalizedBrief:
     evidence_refs: list[str] = field(default_factory=list)
 
 
+@dataclass
+class LLMAnswer:
+    answer: str = ""
+    evidence_refs: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+    note: str = ""
+
+
+@dataclass
+class LLMAnalysis:
+    status: str = "not_run"
+    provider: str = ""
+    model: str = ""
+    generated_at: str = ""
+    mode: str = "evidence_grounded"
+    one_sentence: str = ""
+    core_question: LLMAnswer = field(default_factory=LLMAnswer)
+    motivation: LLMAnswer = field(default_factory=LLMAnswer)
+    evaluated_capability: LLMAnswer = field(default_factory=LLMAnswer)
+    benchmark_design: LLMAnswer = field(default_factory=LLMAnswer)
+    scoring: LLMAnswer = field(default_factory=LLMAnswer)
+    model_results: LLMAnswer = field(default_factory=LLMAnswer)
+    failure_modes: LLMAnswer = field(default_factory=LLMAnswer)
+    reliability: LLMAnswer = field(default_factory=LLMAnswer)
+    unsupported_claims: list[str] = field(default_factory=list)
+    error: str = ""
+
+
 def paper_analysis_from_dict(value: PaperAnalysis | dict | None) -> PaperAnalysis:
     if isinstance(value, PaperAnalysis):
         return value
@@ -144,6 +172,34 @@ def localized_brief_from_dict(value: LocalizedBrief | dict | None) -> LocalizedB
     if not isinstance(value, dict):
         return LocalizedBrief()
     return LocalizedBrief(**value)
+
+
+def llm_answer_from_dict(value: LLMAnswer | dict | None) -> LLMAnswer:
+    if isinstance(value, LLMAnswer):
+        return value
+    if not isinstance(value, dict):
+        return LLMAnswer()
+    return LLMAnswer(**value)
+
+
+def llm_analysis_from_dict(value: LLMAnalysis | dict | None) -> LLMAnalysis:
+    if isinstance(value, LLMAnalysis):
+        return value
+    if not isinstance(value, dict):
+        return LLMAnalysis()
+    data = dict(value)
+    for key in [
+        "core_question",
+        "motivation",
+        "evaluated_capability",
+        "benchmark_design",
+        "scoring",
+        "model_results",
+        "failure_modes",
+        "reliability",
+    ]:
+        data[key] = llm_answer_from_dict(data.get(key))
+    return LLMAnalysis(**data)
 
 
 @dataclass
@@ -171,12 +227,14 @@ class BenchProfile:
     conflicts: list[ConflictRecord] = field(default_factory=list)
     paper_analysis: PaperAnalysis = field(default_factory=PaperAnalysis)
     localized_brief: LocalizedBrief = field(default_factory=LocalizedBrief)
+    llm_analysis: LLMAnalysis = field(default_factory=LLMAnalysis)
     reliability_notes: list[str] = field(default_factory=list)
     confidence: float = 0.0
 
     def __post_init__(self) -> None:
         self.paper_analysis = paper_analysis_from_dict(self.paper_analysis)
         self.localized_brief = localized_brief_from_dict(self.localized_brief)
+        self.llm_analysis = llm_analysis_from_dict(self.llm_analysis)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

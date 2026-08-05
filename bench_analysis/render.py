@@ -202,8 +202,19 @@ def _review(value: str) -> str:
     return REVIEW_LABELS.get(value, value)
 
 
+def _llm_block(title: str, answer) -> str:
+    refs = ", ".join(answer.evidence_refs) if answer.evidence_refs else "未标注"
+    confidence = f"{answer.confidence:.2f}"
+    return (
+        f"<h3>{escape(title)}</h3>"
+        f"<p>{_text(answer.answer)}</p>"
+        f"<p class=\"small\">证据：{escape(refs)} · 置信度：{confidence}</p>"
+    )
+
+
 def render_profile(profile: BenchProfile) -> str:
     analysis = profile.paper_analysis
+    llm_analysis = profile.llm_analysis
     design = analysis.benchmark_design
     scoring = analysis.rubric_and_scoring
     source_items = "".join(
@@ -241,6 +252,36 @@ def render_profile(profile: BenchProfile) -> str:
         f"<td>{escape(conflict.candidate_value)}</td><td>{_link(conflict.source_url, 'source')}</td></tr>"
         for conflict in profile.conflicts
     ) or '<tr><td colspan="4" class="small">No conflict detected.</td></tr>'
+    llm_rows = ""
+    if llm_analysis.status in {"completed", "fallback"}:
+        fallback_note = ""
+        if llm_analysis.status == "fallback":
+            fallback_note = (
+                "<div class=\"callout\"><b>注意：</b>真实 LLM 调用未完成，"
+                "本区当前使用规则抽取结果生成 fallback，适合占位预览，不应当作为最终 LLM 分析。</div>"
+            )
+        llm_rows = (
+            f"<p><b>模型：</b>{escape(llm_analysis.provider)} / {escape(llm_analysis.model)} "
+            f"<span class=\"small\">{escape(llm_analysis.generated_at)}</span></p>"
+            f"{fallback_note}"
+            f"<div class=\"callout\"><b>一句话判断：</b>{escape(llm_analysis.one_sentence or '待复核')}</div>"
+            f"{_llm_block('核心问题', llm_analysis.core_question)}"
+            f"{_llm_block('提出动机', llm_analysis.motivation)}"
+            f"{_llm_block('能力定位', llm_analysis.evaluated_capability)}"
+            f"{_llm_block('设计逻辑', llm_analysis.benchmark_design)}"
+            f"{_llm_block('评分解读', llm_analysis.scoring)}"
+            f"{_llm_block('模型结果解读', llm_analysis.model_results)}"
+            f"{_llm_block('失败模式诊断', llm_analysis.failure_modes)}"
+            f"{_llm_block('可靠性判断', llm_analysis.reliability)}"
+            f"<h3>需要人工复核</h3>{_list(llm_analysis.unsupported_claims)}"
+        )
+    elif llm_analysis.status != "not_run":
+        llm_rows = (
+            f"<p><b>状态：</b>{escape(llm_analysis.status)}</p>"
+            f"<p class=\"small\">{escape(llm_analysis.error or 'LLM analysis did not complete.')}</p>"
+        )
+    else:
+        llm_rows = '<span class="small">本报告生成时尚未运行 LLM 深度分析。</span>'
 
     key_takeaway = profile.localized_brief.one_liner or profile.evaluates
     result_count = len(profile.model_results)
@@ -268,6 +309,7 @@ def render_profile(profile: BenchProfile) -> str:
       <a href="#design">Benchmark 设计</a>
       <a href="#scoring">评分协议</a>
       <a href="#results">模型结果</a>
+      <a href="#llm">LLM 深度分析</a>
       <a href="#findings">发现与失败</a>
       <a href="#appendix">证据与调试</a>
     </div>
@@ -372,11 +414,23 @@ def render_profile(profile: BenchProfile) -> str:
     </table>
   </section>
 
+  <section id="llm">
+    <div class="section-head">
+      <div>
+        <h2>6. LLM 深度分析</h2>
+        <p class="muted">基于抓取材料和 evidence pack 生成的中文解释，用于补强规则抽取无法覆盖的理解、归纳和诊断。</p>
+      </div>
+    </div>
+    <div class="panel">
+      {llm_rows}
+    </div>
+  </section>
+
   <section id="findings" class="two-col">
     <div>
       <div class="section-head">
         <div>
-          <h2>6. 主要发现与论文结论</h2>
+          <h2>7. 主要发现与论文结论</h2>
           <p class="muted">把论文想证明的趋势和结论抽出来。</p>
         </div>
       </div>
@@ -390,7 +444,7 @@ def render_profile(profile: BenchProfile) -> str:
     <aside>
       <div class="section-head">
         <div>
-          <h2>7. 失败模式</h2>
+          <h2>8. 失败模式</h2>
           <p class="muted">模型为什么会在这个 Bench 上失分。</p>
         </div>
       </div>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import re
 import threading
 import traceback
 import zipfile
@@ -13,8 +14,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from .job_manifest import build_job_manifest
 from .job_paths import JobPaths, default_db_path
-from .job_runner import JobOptions, new_job_id, run_batch_job
+from .job_runner import JobOptions, new_job_id, run_batch_job, slug_for_input
 from .job_store import JobStore
+from .schema import SourceRecord
+from .source_discovery import source_records_from_urls
 
 
 STYLE = """
@@ -156,6 +159,10 @@ th { background: #eef2f6; color: #334155; font-size: 13px; }
   font-size: 13px;
   background: #fbfcfd;
 }
+.one-liner {
+  max-width: 760px;
+  color: #334155;
+}
 @media (max-width: 780px) {
   header { display: block; }
   .grid, .two-col, .next-actions { grid-template-columns: 1fr; }
@@ -190,6 +197,7 @@ STEP_LABELS = {
     "extract_paper_analysis": "抽取论文分析",
     "extract_results": "抽取模型结果",
     "reconcile": "合并与冲突处理",
+    "llm_analysis": "LLM 深度分析",
     "render_report": "生成报告",
 }
 
@@ -305,7 +313,10 @@ def render_home(app: BenchWebApp) -> bytes:
     <h1>Bench 分析工作台</h1>
     <div class="muted">先批量分析，再横向对比，最后进入单个 Bench 深读和证据复核。</div>
   </div>
-  <a href="/jobs">历史任务</a>
+  <nav class="actions">
+    <a href="/seeds">种子库</a>
+    <a href="/jobs">历史任务</a>
+  </nav>
 </header>
 
 <section class="hero">
@@ -338,6 +349,28 @@ def render_home(app: BenchWebApp) -> bytes:
     <p><b>任务控制台</b><br><span class="muted">看运行是否完成、哪些 Bench 需要复核。</span></p>
     <p><b>批量对比报告</b><br><span class="muted">横向比较多个 Bench 的核心问题、能力定位和失败模式。</span></p>
     <p><b>单 Bench 论文报告</b><br><span class="muted">深入看设计、评分、模型结果、证据和调试附录。</span></p>
+  </aside>
+</div>
+
+<div class="two-col">
+  <form class="panel" method="post" action="/seeds/manual">
+    <h2>手动补充来源</h2>
+    <p class="muted">当网络搜索不到 Bench，或结果不准时，在这里贴 GitHub、arXiv、官网、PDF 或 leaderboard 链接。</p>
+    <p><input type="search" name="bench_name" placeholder="Bench 名称，例如 IBFE" required></p>
+    <textarea name="source_urls" placeholder="每行一个链接，例如&#10;https://arxiv.org/abs/xxxx.xxxxx&#10;https://github.com/org/repo"></textarea>
+    <p><input type="search" name="notes" placeholder="备注，例如 师兄手动确认的论文和代码链接"></p>
+    <p>
+      <label><input type="checkbox" name="with_web" checked> 基于这些来源立即分析</label>
+    </p>
+    <button type="submit">保存并分析</button>
+  </form>
+
+  <aside class="panel">
+    <h2>种子库机制</h2>
+    <p><b>自动沉淀</b><br><span class="muted">每次 batch 完成后，来源、最新报告和状态都会写入种子库。</span></p>
+    <p><b>手动兜底</b><br><span class="muted">搜索不到时，手动链接会作为高优先级来源进入抓取和抽取。</span></p>
+    <p><b>复用来源</b><br><span class="muted">下次分析同一个 Bench，会优先复用种子库，不再从零开始搜索。</span></p>
+    <p><a href="/seeds">打开种子库列表</a></p>
   </aside>
 </div>
 
@@ -384,6 +417,157 @@ def render_jobs(app: BenchWebApp, query: str = "") -> bytes:
 </table>
 """
     return page("历史任务", body)
+
+
+def _seed_artifact_link(app: BenchWebApp, seed: dict, path_key: str, label: str) -> str:
+    job_id = seed.get("latest_job_id", "")
+    path_value = seed.get(path_key, "")
+    if not job_id or not path_value:
+        return ""
+    base = JobPaths(app.output_root, job_id).job_dir.resolve()
+    target = Path(path_value)
+    try:
+        relative = str(target.resolve().relative_to(base))
+    except (ValueError, OSError):
+        relative = str(target)
+    return f'<a href="/artifact/{escape(job_id)}/{escape(relative)}">{escape(label)}</a>'
+
+
+def _source_rows(sources: list[dict]) -> str:
+    return "".join(
+        f"<tr><td>{escape(source.get('type', ''))}</td>"
+        f"<td><a href=\"{escape(source.get('url', ''))}\">{escape(source.get('title') or source.get('url', ''))}</a></td>"
+        f"<td>{escape(source.get('discovered_by', ''))}</td><td>{escape(source.get('note', ''))}</td></tr>"
+        for source in sources
+    )
+
+
+def _load_seed_profile(seed: dict) -> dict:
+    profile_path = seed.get("latest_profile_json", "")
+    if not profile_path:
+        return {}
+    path = Path(profile_path)
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def _seed_one_liner(seed: dict) -> str:
+    profile = _load_seed_profile(seed)
+    localized_brief = profile.get("localized_brief", {})
+    paper_analysis = profile.get("paper_analysis", {})
+    llm_analysis = profile.get("llm_analysis", {})
+    candidates = [
+        llm_analysis.get("one_sentence", ""),
+        localized_brief.get("one_liner", ""),
+        profile.get("evaluates", ""),
+        paper_analysis.get("core_question", ""),
+        paper_analysis.get("gap_claimed", ""),
+    ]
+    for value in candidates:
+        if value and not str(value).strip().lower().startswith("unknown"):
+            return str(value).strip()
+    if seed.get("manual_sources"):
+        return "已保存手动来源，建议基于这些链接运行一次分析生成简介。"
+    return "待分析：运行一次 Bench 分析后会生成一句话简介。"
+
+
+def render_seeds(app: BenchWebApp, query: str = "") -> bytes:
+    seeds = app.store.list_bench_seeds(query=query, limit=200)
+    rows = ""
+    for seed in seeds:
+        report_link = _seed_artifact_link(app, seed, "latest_report_html", "报告")
+        brief_link = _seed_artifact_link(app, seed, "latest_brief_html", "简报")
+        one_liner = _seed_one_liner(seed)
+        rows += (
+            f"<tr><td><a href=\"/seeds/{escape(seed['slug'])}\">{escape(seed['name'])}</a></td>"
+            f"<td class=\"one-liner\">{escape(one_liner)}</td>"
+            f"<td>{report_link} {brief_link}</td></tr>"
+        )
+    rows = rows or '<tr><td colspan="3" class="muted">还没有种子记录。</td></tr>'
+    body = f"""
+<header><div><h1>Bench 种子库</h1><div class="muted">保存每次搜索和手动补充的来源，支持回看与复用。</div></div><a href="/">返回工作台</a></header>
+<form class="panel actions" method="get" action="/seeds">
+  <input type="search" name="query" value="{escape(query)}" placeholder="按 Bench 名称、别名或来源链接搜索">
+  <button class="secondary" type="submit">查询</button>
+</form>
+<table>
+  <thead><tr><th>Bench</th><th>一句话简介</th><th>最新报告</th></tr></thead>
+  <tbody>{rows}</tbody>
+</table>
+"""
+    return page("Bench 种子库", body)
+
+
+def render_seed_detail(app: BenchWebApp, slug: str) -> bytes:
+    seed = app.store.get_bench_seed(slug)
+    if not seed:
+        return page("种子不存在", f"<h1>种子不存在</h1><p>{escape(slug)}</p>")
+    automatic_rows = _source_rows(seed.get("sources", [])) or '<tr><td colspan="4" class="muted">暂无自动来源。</td></tr>'
+    manual_rows = _source_rows(seed.get("manual_sources", [])) or '<tr><td colspan="4" class="muted">暂无手动来源。</td></tr>'
+    report_link = _seed_artifact_link(app, seed, "latest_report_html", "打开最新报告")
+    brief_link = _seed_artifact_link(app, seed, "latest_brief_html", "打开最新简报")
+    one_liner = _seed_one_liner(seed)
+    body = f"""
+<header><div><h1>{escape(seed['name'])}</h1><div class="muted">种子记录 · {escape(seed['slug'])}</div></div><a href="/seeds">返回种子库</a></header>
+<section class="hero">
+  <div class="eyebrow">Seed Record</div>
+  <h1>{escape(seed['name'])}</h1>
+  <p class="one-liner">{escape(one_liner)}</p>
+</section>
+<div class="panel actions">
+  <form class="inline-form" method="post" action="/seeds/manual">
+    <input type="hidden" name="bench_name" value="{escape(seed['name'])}">
+    <input type="hidden" name="source_urls" value="">
+    <input type="hidden" name="notes" value="从种子库复跑">
+    <input type="hidden" name="with_web" value="on">
+    <button type="submit">用种子来源复跑</button>
+  </form>
+  {report_link} {brief_link}
+</div>
+<div class="panel">
+  <h2>继续补充手动来源</h2>
+  <form method="post" action="/seeds/manual">
+    <input type="hidden" name="bench_name" value="{escape(seed['name'])}">
+    <textarea name="source_urls" placeholder="每行一个新增链接"></textarea>
+    <p><input type="search" name="notes" value="{escape(seed.get('notes', ''))}" placeholder="备注"></p>
+    <p><label><input type="checkbox" name="with_web" checked> 保存后立即分析</label></p>
+    <button type="submit">保存新增来源</button>
+  </form>
+</div>
+<h2>手动来源</h2>
+<table><thead><tr><th>类型</th><th>来源</th><th>方式</th><th>备注</th></tr></thead><tbody>{manual_rows}</tbody></table>
+<h2>自动来源</h2>
+<table><thead><tr><th>类型</th><th>来源</th><th>方式</th><th>备注</th></tr></thead><tbody>{automatic_rows}</tbody></table>
+"""
+    return page(seed["name"], body)
+
+
+def _urls_from_text(value: str) -> list[str]:
+    return re.findall(r"https?://[^\s,，]+|arxiv:[A-Za-z0-9._/-]+", value)
+
+
+def _source_records_from_seed_items(items: list[dict]) -> list[SourceRecord]:
+    records = []
+    for item in items:
+        if not item.get("url"):
+            continue
+        allowed = {field.name for field in SourceRecord.__dataclass_fields__.values()}
+        records.append(SourceRecord(**{key: value for key, value in item.items() if key in allowed}))
+    return records
+
+
+def _merge_source_records(*groups: list[SourceRecord]) -> list[SourceRecord]:
+    by_url: dict[str, SourceRecord] = {}
+    for group in groups:
+        for source in group:
+            existing = by_url.get(source.url)
+            if existing is None or source.relevance_score > existing.relevance_score:
+                by_url[source.url] = source
+    return list(by_url.values())
 
 
 def load_manifest_for_job(app: BenchWebApp, job_id: str) -> tuple[dict | None, dict | None]:
@@ -630,6 +814,14 @@ class RequestHandler(BaseHTTPRequestHandler):
         if path == "/":
             self.send_html(render_home(self.app))
             return
+        if path == "/seeds":
+            query = parse_qs(parsed.query).get("query", [""])[0]
+            self.send_html(render_seeds(self.app, query=query))
+            return
+        if path.startswith("/seeds/"):
+            slug = unquote(path.strip("/").split("/", 1)[1])
+            self.send_html(render_seed_detail(self.app, slug))
+            return
         if path == "/jobs":
             query = parse_qs(parsed.query).get("query", [""])[0]
             self.send_html(render_jobs(self.app, query=query))
@@ -652,6 +844,46 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/seeds/manual":
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length).decode("utf-8", errors="ignore")
+            data = parse_qs(body)
+            bench_name = data.get("bench_name", [""])[0].strip()
+            if not bench_name:
+                self.send_html(page("缺少 Bench", "<h1>缺少 Bench</h1><p>请填写 Bench 名称。</p>"), status=HTTPStatus.BAD_REQUEST)
+                return
+            notes = data.get("notes", [""])[0].strip()
+            urls = _urls_from_text(data.get("source_urls", [""])[0])
+            new_manual_sources = source_records_from_urls(
+                urls,
+                bench_name=bench_name,
+                note=notes or "用户手动补充来源。",
+                discovered_by="manual-ui",
+            )
+            slug = slug_for_input(bench_name)
+            existing = self.app.store.find_bench_seed(bench_name) or self.app.store.get_bench_seed(slug)
+            existing_manual_sources = _source_records_from_seed_items(existing.get("manual_sources", [])) if existing else []
+            manual_sources = _merge_source_records(existing_manual_sources, new_manual_sources)
+            self.app.store.upsert_bench_seed(
+                slug=existing.get("slug", slug) if existing else slug,
+                name=existing.get("name", bench_name) if existing else bench_name,
+                aliases=existing.get("aliases", []) if existing else [],
+                manual_sources=manual_sources,
+                notes=notes,
+            )
+            if "with_web" not in data:
+                self.redirect(f"/seeds/{existing.get('slug', slug) if existing else slug}")
+                return
+            options = JobOptions(
+                with_web=True,
+                include_general_search=False,
+                discovery_limit=8,
+                fetch_limit=5,
+                manual_sources={bench_name.lower(): [source.__dict__ for source in manual_sources]},
+            )
+            job_id = self.app.start_job([bench_name], options)
+            self.redirect(f"/jobs/{job_id}")
+            return
         if parsed.path.startswith("/jobs/"):
             parts = parsed.path.strip("/").split("/")
             job_id = unquote(parts[1]) if len(parts) >= 2 else ""

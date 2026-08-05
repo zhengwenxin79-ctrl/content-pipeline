@@ -46,6 +46,52 @@ def source_type_for_url(url: str) -> str:
     return "project"
 
 
+def source_record_from_url(url: str, bench_name: str, note: str = "", discovered_by: str = "manual") -> SourceRecord | None:
+    cleaned = url.strip()
+    if not cleaned:
+        return None
+    if cleaned.startswith("arxiv:"):
+        cleaned = "https://arxiv.org/abs/" + cleaned.split(":", 1)[1].strip()
+    if not cleaned.startswith(("http://", "https://")):
+        return None
+    parsed = urlparse(cleaned)
+    if not parsed.netloc:
+        return None
+    source_type = source_type_for_url(cleaned)
+    host = parsed.netloc.lower().removeprefix("www.")
+    title = f"{bench_name} {source_type} source"
+    if "github.com" in host:
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) >= 2:
+            title = "/".join(parts[:2])
+    elif "arxiv.org" in host:
+        identifier = parsed.path.rstrip("/").split("/")[-1]
+        title = f"{bench_name} arXiv preprint {identifier}"
+    elif parsed.path.strip("/"):
+        title = f"{bench_name} source on {host}"
+    return SourceRecord(
+        title=title,
+        url=cleaned,
+        type=source_type,
+        note=note or "User-provided source URL.",
+        relevance_score=0.98,
+        discovered_by=discovered_by,
+        retrieved_date=date.today().isoformat(),
+    )
+
+
+def source_records_from_urls(urls: list[str], bench_name: str, note: str = "", discovered_by: str = "manual") -> list[SourceRecord]:
+    records = []
+    seen = set()
+    for url in urls:
+        record = source_record_from_url(url, bench_name=bench_name, note=note, discovered_by=discovered_by)
+        if record is None or record.url in seen:
+            continue
+        records.append(record)
+        seen.add(record.url)
+    return records
+
+
 def build_queries(bench_name: str, aliases: list[str] | None = None) -> list[str]:
     names = [bench_name, *(aliases or [])]
     query_templates = [
