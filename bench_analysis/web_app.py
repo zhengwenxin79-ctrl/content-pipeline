@@ -85,6 +85,10 @@ a:hover { text-decoration: underline; }
   padding: 14px;
   background: #fbfcfd;
 }
+.action-card.pending {
+  border-style: dashed;
+  cursor: default;
+}
 .action-card b { display: block; color: #1c2430; margin-bottom: 4px; }
 .action-card span { display: block; color: #647184; font-size: 13px; }
 .flow {
@@ -183,6 +187,13 @@ th { background: #eef2f6; color: #334155; font-size: 13px; }
   background: #f8fafc;
   padding: 8px 10px;
   color: #334155;
+}
+.share-pending {
+  border: 1px dashed #d9dee6;
+  border-radius: 7px;
+  background: #fbfcfd;
+  padding: 8px 10px;
+  color: #647184;
 }
 @media (max-width: 780px) {
   header { display: block; }
@@ -637,6 +648,8 @@ def public_base_url(job: dict | None = None) -> str:
     output_dir = str((job or {}).get("output_dir", ""))
     if output_dir.startswith("/opt/content-pipeline/"):
         return "https://medai.sugarclaw.top/bench"
+    if str(Path.cwd()).startswith("/opt/content-pipeline"):
+        return "https://medai.sugarclaw.top/bench"
     return ""
 
 
@@ -650,6 +663,33 @@ def copy_button(value: str) -> str:
         f'<button class="secondary" type="button" '
         f'onclick="navigator.clipboard.writeText(\'{escaped_value}\'); this.textContent=\'已复制\'">'
         f"复制</button>"
+    )
+
+
+def share_row(label: str, url: str, available: bool = True) -> str:
+    if not available:
+        return (
+            f'<div class="share-row"><b>{escape(label)}</b>'
+            '<span class="share-pending">任务完成并生成产物后可复制</span>'
+            '<span class="muted">等待生成</span></div>'
+        )
+    return (
+        f'<div class="share-row"><b>{escape(label)}</b>'
+        f"<code>{escape(url)}</code>{copy_button(url)}</div>"
+    )
+
+
+def action_card(label: str, description: str, href: str, available: bool = True) -> str:
+    if not available:
+        return (
+            '<div class="action-card pending">'
+            f"<b>{escape(label)}</b>"
+            f"<span>{escape(description)} 任务完成并生成产物后可打开。</span>"
+            "</div>"
+        )
+    return (
+        f'<a class="action-card" href="{escape(href)}">'
+        f"<b>{escape(label)}</b><span>{escape(description)}</span></a>"
     )
 
 
@@ -675,6 +715,10 @@ def render_job_detail(app: BenchWebApp, job_id: str) -> bytes:
 
     summary = manifest.get("summary", {})
     refresh = job["status"] == "running"
+    output_dir = Path(job["output_dir"])
+    brief_ready = (output_dir / "briefs" / "index.html").exists()
+    index_ready = (output_dir / "index.html").exists()
+    export_ready = output_dir.exists() and any(output_dir.rglob("*"))
     base_url = public_base_url(job)
     share_panel = ""
     if base_url:
@@ -685,21 +729,21 @@ def render_job_detail(app: BenchWebApp, job_id: str) -> bytes:
 <div class="panel share-box">
   <div>
     <h2>发给师兄</h2>
-    <p class="muted">这几个是公开服务器链接，适合直接发到微信、飞书或组会文档里。</p>
+    <p class="muted">任务控制台可以随时分享；简报和批量报告会在任务完成生成后开放复制。</p>
   </div>
-  <div class="share-row"><b>任务控制台</b><code>{escape(job_share_url)}</code>{copy_button(job_share_url)}</div>
-  <div class="share-row"><b>中文简报</b><code>{escape(brief_share_url)}</code>{copy_button(brief_share_url)}</div>
-  <div class="share-row"><b>批量报告</b><code>{escape(index_share_url)}</code>{copy_button(index_share_url)}</div>
+  {share_row("任务控制台", job_share_url)}
+  {share_row("中文简报", brief_share_url, brief_ready)}
+  {share_row("批量报告", index_share_url, index_ready)}
 </div>
 """
     output_links = f"""
 <div class="next-actions">
-  <a class="action-card" href="/artifact/{escape(job_id)}/briefs/index.html"><b>打开中文简报</b><span>适合快速阅读和组会展示。</span></a>
-  <a class="action-card" href="/artifact/{escape(job_id)}/index.html"><b>打开批量对比报告</b><span>横向比较本批次所有 Bench。</span></a>
+  {action_card("打开中文简报", "适合快速阅读和组会展示。", f"/artifact/{job_id}/briefs/index.html", brief_ready)}
+  {action_card("打开批量对比报告", "横向比较本批次所有 Bench。", f"/artifact/{job_id}/index.html", index_ready)}
   <a class="action-card" href="/jobs/{escape(job_id)}/sources"><b>来源与证据复核</b><span>检查来源、raw cache 和 evidence snippets。</span></a>
   <a class="action-card" href="/jobs/{escape(job_id)}/compare"><b>报告横向对比</b><span>用表格快速对齐核心问题、指标和失败模式。</span></a>
-  <a class="action-card" href="/artifact/{escape(job_id)}/export.zip"><b>导出 zip</b><span>下载本任务的全部报告和 JSON 产物。</span></a>
-  <a class="action-card" href="/artifact/{escape(job_id)}/job.json"><b>打开任务清单 JSON</b><span>开发调试和自动复盘使用。</span></a>
+  {action_card("导出 zip", "下载本任务的全部报告和 JSON 产物。", f"/artifact/{job_id}/export.zip", export_ready)}
+  {action_card("打开任务清单 JSON", "开发调试和自动复盘使用。", f"/artifact/{job_id}/job.json", (output_dir / "job.json").exists())}
 </div>
 """
     run_rows = ""
