@@ -419,17 +419,44 @@ def render_jobs(app: BenchWebApp, query: str = "") -> bytes:
     return page("历史任务", body)
 
 
+def _artifact_relative_for_job(job_id: str, path_value: str) -> str:
+    normalized = str(path_value).replace("\\", "/")
+    for marker in (f"/jobs/{job_id}/", f"jobs/{job_id}/"):
+        if marker in normalized:
+            return normalized.split(marker, 1)[1].lstrip("/")
+    for prefix in (f"{job_id}/", "/"):
+        if normalized.startswith(prefix):
+            return normalized[len(prefix):].lstrip("/")
+    return normalized.lstrip("/")
+
+
+def _seed_artifact_path(app: BenchWebApp, seed: dict, path_key: str) -> Path | None:
+    job_id = seed.get("latest_job_id", "")
+    path_value = seed.get(path_key, "")
+    if not job_id or not path_value:
+        return None
+    base = JobPaths(app.output_root, job_id).job_dir.resolve()
+    target = Path(path_value)
+    if target.exists():
+        return target
+    relative = _artifact_relative_for_job(job_id, path_value)
+    candidate = base / relative
+    if candidate.exists():
+        return candidate
+    return None
+
+
 def _seed_artifact_link(app: BenchWebApp, seed: dict, path_key: str, label: str) -> str:
     job_id = seed.get("latest_job_id", "")
     path_value = seed.get(path_key, "")
     if not job_id or not path_value:
         return ""
     base = JobPaths(app.output_root, job_id).job_dir.resolve()
-    target = Path(path_value)
+    target = _seed_artifact_path(app, seed, path_key) or Path(path_value)
     try:
         relative = str(target.resolve().relative_to(base))
     except (ValueError, OSError):
-        relative = str(target)
+        relative = _artifact_relative_for_job(job_id, path_value)
     return f'<a href="/artifact/{escape(job_id)}/{escape(relative)}">{escape(label)}</a>'
 
 
@@ -442,12 +469,9 @@ def _source_rows(sources: list[dict]) -> str:
     )
 
 
-def _load_seed_profile(seed: dict) -> dict:
-    profile_path = seed.get("latest_profile_json", "")
-    if not profile_path:
-        return {}
-    path = Path(profile_path)
-    if not path.exists():
+def _load_seed_profile(app: BenchWebApp, seed: dict) -> dict:
+    path = _seed_artifact_path(app, seed, "latest_profile_json")
+    if not path:
         return {}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -455,8 +479,8 @@ def _load_seed_profile(seed: dict) -> dict:
         return {}
 
 
-def _seed_one_liner(seed: dict) -> str:
-    profile = _load_seed_profile(seed)
+def _seed_one_liner(app: BenchWebApp, seed: dict) -> str:
+    profile = _load_seed_profile(app, seed)
     localized_brief = profile.get("localized_brief", {})
     paper_analysis = profile.get("paper_analysis", {})
     llm_analysis = profile.get("llm_analysis", {})
@@ -481,7 +505,7 @@ def render_seeds(app: BenchWebApp, query: str = "") -> bytes:
     for seed in seeds:
         report_link = _seed_artifact_link(app, seed, "latest_report_html", "报告")
         brief_link = _seed_artifact_link(app, seed, "latest_brief_html", "简报")
-        one_liner = _seed_one_liner(seed)
+        one_liner = _seed_one_liner(app, seed)
         rows += (
             f"<tr><td><a href=\"/seeds/{escape(seed['slug'])}\">{escape(seed['name'])}</a></td>"
             f"<td class=\"one-liner\">{escape(one_liner)}</td>"
@@ -510,7 +534,7 @@ def render_seed_detail(app: BenchWebApp, slug: str) -> bytes:
     manual_rows = _source_rows(seed.get("manual_sources", [])) or '<tr><td colspan="4" class="muted">暂无手动来源。</td></tr>'
     report_link = _seed_artifact_link(app, seed, "latest_report_html", "打开最新报告")
     brief_link = _seed_artifact_link(app, seed, "latest_brief_html", "打开最新简报")
-    one_liner = _seed_one_liner(seed)
+    one_liner = _seed_one_liner(app, seed)
     body = f"""
 <header><div><h1>{escape(seed['name'])}</h1><div class="muted">种子记录 · {escape(seed['slug'])}</div></div><a href="/seeds">返回种子库</a></header>
 <section class="hero">
