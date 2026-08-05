@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import os
 import re
 import threading
 import traceback
@@ -163,9 +164,30 @@ th { background: #eef2f6; color: #334155; font-size: 13px; }
   max-width: 760px;
   color: #334155;
 }
+.share-box {
+  display: grid;
+  gap: 10px;
+}
+.share-row {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+.share-row code {
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+  border: 1px solid #d9dee6;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 8px 10px;
+  color: #334155;
+}
 @media (max-width: 780px) {
   header { display: block; }
   .grid, .two-col, .next-actions { grid-template-columns: 1fr; }
+  .share-row { grid-template-columns: 1fr; }
   table { display: block; overflow-x: auto; }
 }
 """
@@ -608,6 +630,29 @@ def load_manifest_for_job(app: BenchWebApp, job_id: str) -> tuple[dict | None, d
     return job, manifest
 
 
+def public_base_url(job: dict | None = None) -> str:
+    configured = os.environ.get("BENCH_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if configured:
+        return configured
+    output_dir = str((job or {}).get("output_dir", ""))
+    if output_dir.startswith("/opt/content-pipeline/"):
+        return "https://medai.sugarclaw.top/bench"
+    return ""
+
+
+def public_link(base_url: str, path: str) -> str:
+    return f"{base_url}/{path.lstrip('/')}"
+
+
+def copy_button(value: str) -> str:
+    escaped_value = escape(value, quote=True)
+    return (
+        f'<button class="secondary" type="button" '
+        f'onclick="navigator.clipboard.writeText(\'{escaped_value}\'); this.textContent=\'已复制\'">'
+        f"复制</button>"
+    )
+
+
 def _load_profile(job: dict, profile_link: str) -> dict:
     if not profile_link:
         return {}
@@ -630,6 +675,23 @@ def render_job_detail(app: BenchWebApp, job_id: str) -> bytes:
 
     summary = manifest.get("summary", {})
     refresh = job["status"] == "running"
+    base_url = public_base_url(job)
+    share_panel = ""
+    if base_url:
+        job_share_url = public_link(base_url, f"jobs/{job_id}")
+        brief_share_url = public_link(base_url, f"artifact/{job_id}/briefs/index.html")
+        index_share_url = public_link(base_url, f"artifact/{job_id}/index.html")
+        share_panel = f"""
+<div class="panel share-box">
+  <div>
+    <h2>发给师兄</h2>
+    <p class="muted">这几个是公开服务器链接，适合直接发到微信、飞书或组会文档里。</p>
+  </div>
+  <div class="share-row"><b>任务控制台</b><code>{escape(job_share_url)}</code>{copy_button(job_share_url)}</div>
+  <div class="share-row"><b>中文简报</b><code>{escape(brief_share_url)}</code>{copy_button(brief_share_url)}</div>
+  <div class="share-row"><b>批量报告</b><code>{escape(index_share_url)}</code>{copy_button(index_share_url)}</div>
+</div>
+"""
     output_links = f"""
 <div class="next-actions">
   <a class="action-card" href="/artifact/{escape(job_id)}/briefs/index.html"><b>打开中文简报</b><span>适合快速阅读和组会展示。</span></a>
@@ -701,6 +763,8 @@ def render_job_detail(app: BenchWebApp, job_id: str) -> bytes:
     <div class="kv"><b>错误</b>{summary.get('error_count', 0)}</div>
   </div>
 </section>
+
+{share_panel}
 
 <div class="section-head">
   <div>
